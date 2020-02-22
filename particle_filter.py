@@ -1,0 +1,456 @@
+#!/usr/bin/env python
+
+
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from matplotlib.patches import Ellipse
+import random
+import math
+import bisect
+import pymap3d as pm
+import numpy as np
+import threading
+import time
+from datetime import datetime
+import seaborn as sns
+from sklearn.cluster import MeanShift
+
+
+class WeightedDistribution:
+    def __init__(self, state):
+        accum = 0.0
+        self.state = [p for p in state if p.w > 0]
+        self.distribution = []
+        for x in self.state:
+            accum += x.w
+            self.distribution.append(accum)
+
+    def pick(self):
+        try:
+            # Due to numeric problems, the weight don't sum up to 1.0 after normalization,
+            # so we can't pick from a uniform distribution in range [0, 1]
+            return self.state[bisect.bisect_left(self.distribution, random.uniform(0, self.distribution[-1]))]
+        except IndexError:
+            # Happens when all particles are improbable w=0
+            return None
+
+
+class Particle:
+    def __init__(self, x, y, w=1., noisy=False):
+        if noisy:
+            x, y = Simulator.add_some_noise(x, y)
+
+        self.x = x
+        self.y = y
+        self.w = w
+
+    def __repr__(self):
+        return "(%f, %f, w=%f)" % (self.x, self.y, self.w)
+
+    @property
+    def xy(self):
+        return self.x, self.y
+
+    @classmethod
+    def create_random(cls, count, x1, y1, x2, y2):
+        return [cls(random.uniform(x1, x2), random.uniform(y1, y2)) for _ in range(0, count)]
+
+    def move_by(self, x, y):
+        self.x += x
+        self.y += y
+
+
+class Obj(Particle):
+    speed = 0.2
+
+    def __init__(self):
+        super(Obj, self).__init__(None, None)
+
+    def read_sensor(self, maze):
+        """
+        Poor robot, it's sensors are noisy and pretty strange,
+        it only can measure the distance to the nearest beacon(!)
+        and is not very accurate at that too!
+        """
+        return Simulator.add_little_noise(super(Robot, self).read_sensor(maze))[0]
+
+    def move(self, maze):
+        """
+        Move the robot. Note that the movement is stochastic too.
+        """
+        while True:
+            self.step_count += 1
+            if self.advance_by(self.speed, noisy=True, checker=lambda r, dx, dy: maze.is_free(r.x + dx, r.y + dy)):
+                break
+            # Bumped into something or too long in same direction,
+            # chose random new direction
+            self.chose_random_direction()
+
+
+class Simulator:
+    def __init__(self, fn_in, n_part, s_gauss, speed):
+        self.fn_in = fn_in
+        self.n_part = n_part
+        self.speed = speed
+        self.s_gauss = s_gauss
+        self.coords_x = []
+        self.coords_y = []
+        self.refresh = True
+        self.particles = []
+        self.step = 0
+        self.part_borders = [0, 0, 0, 0]
+        self.m_x = None
+        self.m_y = None
+        self.m_confident = False
+        self.ax = None
+        self.obj = None
+        self.next = False
+        self.cid = None
+        self.manual_points = []
+
+        self.manual_points.append([])
+
+    def _cb_keyboard(self):
+        while True:
+            input()
+            self.next = True
+
+    def processing(self):
+        # 1. Read all measurements from file
+        coords_x = []
+        coords_y = []
+        with open(self.fn_in, 'r') as file:
+            while True:
+                # Get next line from file
+                line = file.readline()
+
+                # if line is empty end of file is reached
+                if not line:
+                    break
+                else:
+                    fields = line.split(" ")
+
+                    if len(fields) == 2:  # Only valid lines
+                        coords_x.append(float(fields[0]))
+                        coords_y.append(float(fields[1]))
+                    # end if
+                # end if
+            # end while
+        # end with
+
+        # Convert from WGS84 to ENU, with its origin at the center of all points
+        observer_x = (max(coords_x) + min(coords_x)) / 2
+        observer_y = (max(coords_y) + min(coords_y)) / 2
+
+        for i in range(len(coords_x)):
+            e, n, _ = pm.geodetic2enu(np.asarray(coords_x[i]), np.asarray(coords_y[i]), np.asarray(0),
+                                      np.asarray(observer_x), np.asarray(observer_y), np.asarray(0), ell=None, deg=True)
+            self.coords_x.append(e)
+            self.coords_y.append(n)
+        # end for
+
+        # Get the borders around the points for creating new particles later on
+        self.part_borders[0] = min(self.coords_x)
+        self.part_borders[1] = min(self.coords_y)
+        self.part_borders[2] = max(self.coords_x)
+        self.part_borders[3] = max(self.coords_y)
+
+        # 2. Generate many particles
+        self.particles = Particle.create_random(self.n_part, *self.part_borders)
+
+        # 3. Generate a robot
+        # robbie = Robot(world)
+        self.obj = Obj()
+
+        # 4. Simulation loop
+        step = 0
+        while True:
+            step += 1
+            print("Step {}".format(step))
+
+            # Wait for Return-Key-Press (console) of mouse click (GUI)
+            while not self.next:
+                time.sleep(0.1)
+
+            self.next = False
+
+            # 4.1 Read Robbie's sensor:
+            #     i.e., get the distance r_d to the nearest beacon
+            #    r_d = robbie.read_sensor(world)
+            self.obj.x = self.coords_x[self.step]
+            self.obj.y = self.coords_y[self.step]
+            self.step += 1
+
+            # 4.2 Update particle weight according to how good every particle matches
+            #     Robbie's sensor reading
+            for p in self.particles:
+                # get distance of particle to nearest beacon
+                d_x = p.x - self.obj.x
+                d_y = p.y - self.obj.y
+                p_d = math.sqrt(d_x * d_x + d_y * d_y)
+                p.w = self.w_gauss(p_d, self.s_gauss)  # XXX
+
+            # 4.3 Compute weighted mean of particles (gray circle)
+            self.m_x, self.m_y, self.m_confident = self.compute_mean_point()
+
+            # Mean shift XXX
+            X = np.array([[p.x, p.y] for p in self.particles])
+
+            clustering = True
+            if clustering:
+                clust = MeanShift(bandwidth=10).fit(X)
+                self.cluster_centers_ = clust.cluster_centers_
+                # print(clust.labels_)
+                # print(clust.cluster_centers_)
+            # end if
+
+            # 4.4 show particles, show mean point, show Robbie
+            # Wait until drawing has finished (do avoid changing e.g. particles
+            # before they are drawn in their current position)
+            self.refresh = True
+
+            while self.refresh:
+                time.sleep(0.1)
+
+            # 4.5 Resampling follows here:
+            resampling = True
+            if resampling:
+                new_particles = []
+
+                # 4.5.1 Normalise weights
+                nu = sum(p.w for p in self.particles)
+                print("nu = {}".format(nu))
+                if nu:
+                    for p in self.particles:
+                        p.w = p.w / nu
+                # end if
+
+                # 4.5.2 create a weighted distribution, for fast picking
+                dist = WeightedDistribution(self.particles)
+
+                print("# particles: {}".format(len(self.particles)))
+                cnt = 0
+                for _ in range(len(self.particles)):
+                    p = dist.pick()
+                    if p is None:  # No pick b/c all totally improbable
+                        new_particle = Particle.create_random(1, *self.part_borders)[0]
+                        cnt += 1
+                    else:
+                        new_particle = p
+                        new_particle.w = 1
+                    # end if
+
+                    x, y = self.add_noise(1, 0, 0)
+                    new_particle.move_by(x, y)
+
+                    new_particles.append(new_particle)
+                # end for
+
+                print("# particles newly created: {}".format(cnt))
+
+                self.particles = new_particles
+            # end if
+
+            # 4.5.3 Move Robbie in world (randomly)
+            #    old_heading = robbie.h
+            #    robbie.move(world)
+            for p in self.particles:
+                x, y = self.add_noise(10, 0, 0)
+                p.move_by(x, y)
+            # end for
+
+            # 4.5.4 Move all particles according to belief of movement
+            for p in self.particles:
+                d_x = p.x - self.obj.x
+                d_y = p.y - self.obj.y
+                p_d = math.sqrt(d_x * d_x + d_y * d_y)
+                angle = math.atan2(self.obj.y - p.y, self.obj.x - p.x)
+                # p_d = 1.0  # XXX
+                # p.x += self.speed * p_d * math.cos(angle)
+                # p.y += self.speed * p_d * math.sin(angle)
+                p.move_by(min(self.speed, p_d) * math.cos(angle), min(self.speed, p_d) * math.sin(angle))
+            # end for
+
+    def run(self):
+        # Processing thread
+        t_proc = threading.Thread(target=self.processing)
+        t_proc.start()
+
+        # Keyboard thread
+        t_kbd = threading.Thread(target=self._cb_keyboard)
+        t_kbd.daemon = True
+        t_kbd.start()
+
+        # Prepare GUI
+        fig = plt.figure()
+        fig.canvas.set_window_title('State Space')
+        self.ax = fig.add_subplot(1, 1, 1)
+
+        self.cid = fig.canvas.mpl_connect('button_press_event', self._cb_button_press_event)
+
+        # Cyclic update check (but only draws, if there's something new)
+        _anim = animation.FuncAnimation(fig, self.update_window, interval=100)
+
+        # Show blocking window which draws the current state and handles mouse clicks
+        plt.show()
+
+    def _cb_button_press_event(self, event):
+        if event.button == 1 and event.key == "control":  # Ctrl-Left click
+            print("Add new track")
+            self.manual_points.append([])
+
+        elif event.button == 1 and event.key == "shift":  # Shift-Left click
+            print("Add point {:4f}, {:4f} to track # {}".format(event.xdata, event.ydata, len(self.manual_points)))
+            self.manual_points[-1].append((event.xdata, event.ydata))
+
+        elif event.button == 3:  # Right click
+            print("click")
+            self.next = True
+        # end if
+
+    def calc_density(self, x, y):
+        accum = 0.
+
+        for p in self.particles:
+            d_x = p.x - x
+            d_y = p.y - y
+            p_d = 1. / np.sqrt(d_x * d_x + d_y * d_y)
+            accum += p_d
+        # end for
+
+        return accum
+
+    def calc_density_map(self, grid_res=100):
+        x = np.linspace(self.part_borders[0], self.part_borders[2], grid_res)
+        y = np.linspace(self.part_borders[1], self.part_borders[3], grid_res)
+
+        X, Y = np.meshgrid(x, y)
+        Z = self.calc_density(X, Y)
+
+        return X, Y, Z
+
+    def update_window(self, _frame=None):
+        if not self.refresh or self.ax is None or self.obj is None:
+            return
+
+        self.ax.clear()
+
+        # Draw density map
+        draw_kde = True
+        if not draw_kde:
+            X, Y, Z = self.calc_density_map(grid_res=100)
+            self.ax.contourf(X, Y, Z, 20, cmap='Blues')
+        else:
+            X = [p.x for p in self.particles]
+            Y = [p.y for p in self.particles]
+            sns.kdeplot(X, Y, shade=True, ax=self.ax)
+        # end if
+
+        # All detections
+        self.ax.scatter(self.coords_x, self.coords_y, c="green", edgecolor="darkgreen", marker="o")
+
+        # Weighted mean
+        self.ax.scatter([self.m_x], [self.m_y], s=200, c="gray" if self.m_confident else "pink", edgecolor="black",
+                        marker="o")
+
+        # Particles
+        self.ax.scatter([p.x for p in self.particles], [p.y for p in self.particles], s=5, edgecolor="blue", marker="o")
+
+        # Mean shift centers XXX
+        if hasattr(self, 'cluster_centers_'):
+            self.ax.scatter([cc[0] for cc in self.cluster_centers_],
+                            [cc[1] for cc in self.cluster_centers_], s=25, edgecolor="orange", marker="x")
+
+        # Current detection
+        self.ax.scatter([self.obj.x], [self.obj.y], s=100, c="red", marker="x")
+
+        # Importance weight Gaussian-kernel covariance ellipse
+        ell_radius_x = self.s_gauss
+        ell_radius_y = self.s_gauss
+        ellipse = Ellipse((self.obj.x, self.obj.y), width=ell_radius_x * 2, height=ell_radius_y * 2, facecolor='none',
+                          edgecolor="black")
+        self.ax.add_patch(ellipse)
+
+        # Visualization settings (need to be set every time since they don't are permanent)
+        self.ax.set_xlim([self.part_borders[0], self.part_borders[2]])
+        self.ax.set_ylim([self.part_borders[1], self.part_borders[3]])
+        self.ax.set_aspect('equal', 'datalim')
+        self.ax.grid(False)
+
+        self.ax.set_xlabel('east [m]')
+        self.ax.set_ylabel('north [m]')
+
+        self.refresh = False
+    # end def
+
+    @staticmethod
+    def add_noise(level, *coords):
+        return [x + random.uniform(-level, level) for x in coords]
+
+    @staticmethod
+    def add_little_noise(*coords):
+        return Simulator.add_noise(0.02, *coords)
+
+    @staticmethod
+    def add_some_noise(*coords):
+        return Simulator.add_noise(0.1, *coords)
+
+    # This is just a gaussian kernel I pulled out of my hat, to transform
+    # values near to robbie's measurement => 1, further away => 0
+    @staticmethod
+    def w_gauss(x, sigma):
+        g = math.e ** -(x * x / (2 * sigma * sigma))
+
+        return g
+
+    def compute_mean_point(self):
+        """
+        Compute the mean for all particles that have a reasonably good weight.
+        This is not part of the particle filter algorithm but rather an
+        addition to show the "best belief" for current position.
+        """
+
+        m_x = 0
+        m_y = 0
+        m_count = 0
+
+        for p in self.particles:
+            m_count += p.w
+            m_x += p.x * p.w
+            m_y += p.y * p.w
+
+        if m_count == 0:
+            return -1, -1, False
+
+        m_x /= m_count
+        m_y /= m_count
+
+        # Now compute how good that mean is -- check how many particles
+        # actually are in the immediate vicinity
+        m_count = 0
+
+        for p in self.particles:
+            d_x = p.x - m_x
+            d_y = p.y - m_y
+            p_d = math.sqrt(d_x * d_x + d_y * d_y)
+
+            if p_d < 3:
+                m_count += 1
+
+        return m_x, m_y, m_count > len(self.particles) * 0.95
+
+
+def main():
+    # Library settings
+    sns.set(color_codes=True)
+
+    # Initialize random generator
+    random.seed(datetime.now())
+
+    sim = Simulator(fn_in="coords_EO.lst", n_part=100, s_gauss=20., speed=1.0)
+    sim.run()
+
+
+if __name__ == "__main__":
+    main()
+
