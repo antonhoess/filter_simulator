@@ -17,7 +17,7 @@ from sklearn.cluster import MeanShift
 import sys
 import getopt
 from enum import IntEnum
-
+from abc import ABC, abstractmethod
 
 class Logging(IntEnum):
     NONE = 0
@@ -98,8 +98,9 @@ class Obj(Particle):
             # chose random new direction
             self.chose_random_direction()
 
+
 class Detection:
-    def __init__(self):
+    def __init__(self, x, y):
         self.x = None
         self.y = None
 
@@ -112,6 +113,154 @@ class Frame:
         self.detections.append(detection)
 
 
+class Limits:
+    def __init__(self):
+        self.x_min = None
+        self.y_min = None
+        self.x_max = None
+        self.y_max = None
+    # end def
+# end class
+
+
+class FrameList:
+    def __init__(self):
+        self.frames = []
+
+    def append_empty_frame(self):
+        self.frames.append(Frame())
+
+    def get_current_frame(self) -> Frame:
+        return self.frames[-1]
+
+    def foreach_detection(self, cb_detection):
+        for frame in self.frames:
+            for detection in frame:
+                cb_detection(detection)
+        # end for
+
+    def calc_limits(self):
+        limits = Limits()
+        
+        # x_min = None
+        # y_min = None
+        # x_max = None
+        # y_max = None
+
+        def check_detection(detection, limits):
+            global x_min, x_max, y_min, y_max
+
+            if x_min is None or detection.x < x_min:
+                x_min = detection.x
+
+            if y_min is None or detection.y < y_min:
+                y_min = detection.y
+
+            if x_max is None or detection.x > x_max:
+                x_max = detection.x
+
+            if y_max is None or detection.y < y_max:
+                y_max = detection.y
+        # end def
+
+        self.foreach_detection(check_detection)
+
+        return x_min, y_min, x_max, y_max
+
+    def calc_center(self):
+        x_min, x_max, y_min, y_max = self.calc_limits()
+
+        return (x_min + x_max) / 2, (y_min + y_max) / 2
+
+
+class InputLineHandler(ABC):
+    def __init__(self):
+        super().__init__()
+
+    @abstractmethod
+    def handle_line(self, line):
+        pass
+
+
+class InputLineHandlerLatLonIdx(InputLineHandler):
+    def __init__(self):
+        self.cur_idx = None
+        self.frame_list = FrameList()
+        super().__init__()
+
+    def handle_line(self, line):
+        lat = None
+        lon = None
+        idx = None
+
+        # Split line and read fields
+        fields = line.split(" ")
+
+        if len(fields) >= 2:
+            lat = float(fields[0])
+            lon = float(fields[1])
+        # end if
+
+        if len(fields) >= 3:
+            idx = float(fields[2])
+        # end if
+
+        # Check if we need to add a new frame to the frame list
+        if idx is None or self.cur_idx is None or idx != self.cur_idx:
+            self.cur_idx = idx
+            self.frame_list.append_empty_frame()
+
+        # Add detection from field values to the frame
+        self.frame_list.get_current_frame().add_detection(Detection(lat, lon))
+
+        return
+    # end def
+# end class
+
+
+class FileReader:
+    def __init__(self, filename):
+        self.filename = filename
+
+    def read(self, input_line_handler: InputLineHandler):
+        with open(self.filename, 'r') as file:
+            while True:
+                # Get next line from file
+                line = file.readline()
+
+                # if line is empty end of file is reached
+                if not line:
+                    break
+                else:
+                    input_line_handler.handle_line(line)
+                # end if
+            # end while
+        # end with
+    # end def
+# end class
+
+
+class WGS84ToENUConverter:
+    def __init__(self, frame_list_wgs84: FrameList):
+        self.frame_list_wgs84 = frame_list_wgs84
+
+    def convert(self):
+        frame_list_enu = FrameList()
+
+        for frame in self.frame_list_wgs84.frames:
+            frame_list_enu.append_empty_frame()
+
+            for detection in self.frame_list_wgs84.get_current_frame().detections:
+                # convert...XXX
+
+
+
+                frame_list_enu.get_current_frame().add_detection(detection)
+
+
+
+
+
 class Simulator:
     def __init__(self, fn_in, fn_out, n_part, s_gauss, speed, verbosity):
         self.fn_in = fn_in
@@ -122,6 +271,7 @@ class Simulator:
         self.coords_x = []
         self.coords_y = []
         self.coords_idx = []
+
         self.refresh = True
         self.particles = []
         self.step = 0
@@ -147,10 +297,10 @@ class Simulator:
             try:
                 if cmd == "":
                     self.next = True
-                    
+
                 elif cmd == "+":
                     pass #XXX
-                
+
                 elif cmd.startswith("-"):
                     idx = int(cmd[1:])
 
@@ -159,6 +309,16 @@ class Simulator:
 
     def processing(self):
         # 1. Read all measurements from file
+
+        fr = FileReader(self.fn_in)
+        ilh_lli = InputLineHandlerLatLonIdx()
+        fr.read(ilh_lli)
+
+        self.frame_list = ilh_lli.frame_list
+
+
+
+
         coords_x = []
         coords_y = []
         with open(self.fn_in, 'r') as file:
