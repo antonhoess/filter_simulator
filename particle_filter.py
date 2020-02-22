@@ -14,6 +14,18 @@ import time
 from datetime import datetime
 import seaborn as sns
 from sklearn.cluster import MeanShift
+import sys
+import getopt
+from enum import IntEnum
+
+
+class Logging(IntEnum):
+    NONE = 0
+    CRITICAL = 1
+    ERROR = 2
+    WARNING = 3
+    INFO = 4
+    DEBUG = 5
 
 
 class WeightedDistribution:
@@ -88,8 +100,9 @@ class Obj(Particle):
 
 
 class Simulator:
-    def __init__(self, fn_in, n_part, s_gauss, speed):
+    def __init__(self, fn_in, fn_out, n_part, s_gauss, speed, verbosity):
         self.fn_in = fn_in
+        self.fn_out = fn_out
         self.n_part = n_part
         self.speed = speed
         self.s_gauss = s_gauss
@@ -109,6 +122,7 @@ class Simulator:
         self.observer_x = None
         self.observer_y = None
         self.manual_points = []
+        self.verbosity = verbosity
 
         self.manual_points.append([])
 
@@ -168,7 +182,8 @@ class Simulator:
         step = 0
         while True:
             step += 1
-            print("Step {}".format(step))
+            if self.verbosity >= Logging.INFO:
+                print("Step {}".format(step))
 
             # Wait for Return-Key-Press (console) of mouse click (GUI)
             while not self.next:
@@ -202,8 +217,10 @@ class Simulator:
             if clustering:
                 clust = MeanShift(bandwidth=10).fit(X)
                 self.cluster_centers_ = clust.cluster_centers_
-                # print(clust.labels_)
-                # print(clust.cluster_centers_)
+                if self.verbosity >= Logging.DEBUG:
+                    print(clust.labels_)
+                    print(clust.cluster_centers_)
+                # end if
             # end if
 
             # 4.4 show particles, show mean point, show Robbie
@@ -221,7 +238,9 @@ class Simulator:
 
                 # 4.5.1 Normalise weights
                 nu = sum(p.w for p in self.particles)
-                print("nu = {}".format(nu))
+                if self.verbosity >= Logging.DEBUG:
+                    print("nu = {}".format(nu))
+
                 if nu:
                     for p in self.particles:
                         p.w = p.w / nu
@@ -230,7 +249,9 @@ class Simulator:
                 # 4.5.2 create a weighted distribution, for fast picking
                 dist = WeightedDistribution(self.particles)
 
-                print("# particles: {}".format(len(self.particles)))
+                if self.verbosity >= Logging.INFO:
+                    print("# particles: {}".format(len(self.particles)))
+
                 cnt = 0
                 for _ in range(len(self.particles)):
                     p = dist.pick()
@@ -248,7 +269,8 @@ class Simulator:
                     new_particles.append(new_particle)
                 # end for
 
-                print("# particles newly created: {}".format(cnt))
+                if self.verbosity >= Logging.INFO:
+                    print("# particles newly created: {}".format(cnt))
 
                 self.particles = new_particles
             # end if
@@ -298,11 +320,15 @@ class Simulator:
 
     def _cb_button_press_event(self, event):
         if event.button == 1 and event.key == "control":  # Ctrl-Left click
-            # print("Add new track")
+            if self.verbosity >= Logging.INFO:
+                print("Add new track")
+
             self.manual_points.append([])
 
         elif event.button == 1 and event.key == "shift":  # Shift-Left click
-            # print("Add point {:4f}, {:4f} to track # {}".format(event.xdata, event.ydata, len(self.manual_points)))
+            if self.verbosity >= Logging.INFO:
+                print("Add point {:4f}, {:4f} to track # {}".format(event.xdata, event.ydata, len(self.manual_points)))
+
             e = event.xdata
             n = event.ydata
             lat, lon, _ = pm.enu2geodetic(e, n, np.asarray(0), np.asarray(self.observer_x), np.asarray(self.observer_y),
@@ -313,7 +339,9 @@ class Simulator:
             self.refresh = True
 
         elif event.button == 3:  # Right click
-            print("click")
+            if self.verbosity >= Logging.DEBUG:
+                print("Right click")
+
             self.next = True
         # end if
 
@@ -454,17 +482,60 @@ class Simulator:
         return m_x, m_y, m_count > len(self.particles) * 0.95
 
 
-def main():
+def main(argv):
     # Library settings
     sns.set(color_codes=True)
 
     # Initialize random generator
     random.seed(datetime.now())
 
-    sim = Simulator(fn_in="coords_EO.lst", n_part=100, s_gauss=20., speed=1.0)
+    # Read command line arguments
+    def usage():
+        return "{} -g <GAUSS_SIGMA> -h -i <INPUT_FILE> -n <N_PARTICLES> -o <OUTPUT_FILE> -s <SPEED> -v <VERBOSITY>\n".format(argv[0]) + \
+               "-g: Sigma of Gaussian importance weight kernel.\n" + \
+               "-h: This help.\n" + \
+               "-i: Input file to parse with coordinates in WGS 84 system." + \
+               "-n: Number of particles.\n" + \
+               "-o: Output file to write manually set coordinates converted to WGS 84\n" + \
+               "-s: Speed of the object.\n" + \
+               "-v: Verbosity level. 0 = Silent [Default], >0 = increasing verbosity.\n"
+    # end def
+
+    inputfile = ""
+    outputfile = "out.lst"
+    n_particles = 100
+    sigma = 20.
+    speed = 1.
+    verbosity = Logging.INFO
+
+    try:
+        opts, args = getopt.getopt(argv[1:], "g:hi:n:o:s:v")
+    except getopt.GetoptError:
+        print(usage())
+        sys.exit(2)
+    # end try
+
+    for opt, arg in opts:
+        if opt == '-h':
+            print(usage())
+            sys.exit()
+        elif opt == "-i":
+            inputfile = arg
+        elif opt == "-n":
+            n_particles = arg
+        elif opt == "-o":
+            outputfile = arg
+        elif opt == "-g":
+            sigma = arg
+        elif opt == "-v":
+            verbosity = arg
+    # end for
+
+    sim = Simulator(fn_in=inputfile, fn_out=outputfile, n_part=n_particles, s_gauss=sigma, speed=speed,
+                    verbosity=verbosity)
     sim.run()
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv)
 
