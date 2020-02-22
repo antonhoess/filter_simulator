@@ -98,6 +98,19 @@ class Obj(Particle):
             # chose random new direction
             self.chose_random_direction()
 
+class Detection:
+    def __init__(self):
+        self.x = None
+        self.y = None
+
+
+class Frame:
+    def __init__(self):
+        self.detections = []
+
+    def add_detection(self, detection):
+        self.detections.append(detection)
+
 
 class Simulator:
     def __init__(self, fn_in, fn_out, n_part, s_gauss, speed, verbosity):
@@ -108,6 +121,7 @@ class Simulator:
         self.s_gauss = s_gauss
         self.coords_x = []
         self.coords_y = []
+        self.coords_idx = []
         self.refresh = True
         self.particles = []
         self.step = 0
@@ -128,8 +142,20 @@ class Simulator:
 
     def _cb_keyboard(self):
         while True:
-            input()
-            self.next = True
+            cmd = input()
+
+            try:
+                if cmd == "":
+                    self.next = True
+                    
+                elif cmd == "+":
+                    pass #XXX
+                
+                elif cmd.startswith("-"):
+                    idx = int(cmd[1:])
+
+            except Exception as e:
+                print("Invalid command. Exception: {}".format(e))
 
     def processing(self):
         # 1. Read all measurements from file
