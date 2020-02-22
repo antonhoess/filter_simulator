@@ -106,6 +106,8 @@ class Simulator:
         self.obj = None
         self.next = False
         self.cid = None
+        self.observer_x = None
+        self.observer_y = None
         self.manual_points = []
 
         self.manual_points.append([])
@@ -139,12 +141,12 @@ class Simulator:
         # end with
 
         # Convert from WGS84 to ENU, with its origin at the center of all points
-        observer_x = (max(coords_x) + min(coords_x)) / 2
-        observer_y = (max(coords_y) + min(coords_y)) / 2
+        self.observer_x = (max(coords_x) + min(coords_x)) / 2
+        self.observer_y = (max(coords_y) + min(coords_y)) / 2
 
         for i in range(len(coords_x)):
             e, n, _ = pm.geodetic2enu(np.asarray(coords_x[i]), np.asarray(coords_y[i]), np.asarray(0),
-                                      np.asarray(observer_x), np.asarray(observer_y), np.asarray(0), ell=None, deg=True)
+                                      np.asarray(self.observer_x), np.asarray(self.observer_y), np.asarray(0), ell=None, deg=True)
             self.coords_x.append(e)
             self.coords_y.append(n)
         # end for
@@ -296,12 +298,19 @@ class Simulator:
 
     def _cb_button_press_event(self, event):
         if event.button == 1 and event.key == "control":  # Ctrl-Left click
-            print("Add new track")
+            # print("Add new track")
             self.manual_points.append([])
 
         elif event.button == 1 and event.key == "shift":  # Shift-Left click
-            print("Add point {:4f}, {:4f} to track # {}".format(event.xdata, event.ydata, len(self.manual_points)))
+            # print("Add point {:4f}, {:4f} to track # {}".format(event.xdata, event.ydata, len(self.manual_points)))
+            e = event.xdata
+            n = event.ydata
+            lat, lon, _ = pm.enu2geodetic(e, n, np.asarray(0), np.asarray(self.observer_x), np.asarray(self.observer_y),
+                                          np.asarray(0), ell=None, deg=True)
+
+            print("{} {} {}".format(lat, lon, len(self.manual_points)))
             self.manual_points[-1].append((event.xdata, event.ydata))
+            self.refresh = True
 
         elif event.button == 3:  # Right click
             print("click")
@@ -370,6 +379,11 @@ class Simulator:
         ellipse = Ellipse((self.obj.x, self.obj.y), width=ell_radius_x * 2, height=ell_radius_y * 2, facecolor='none',
                           edgecolor="black")
         self.ax.add_patch(ellipse)
+
+        # Manual set points
+        for track in self.manual_points:
+            self.ax.scatter([p[0] for p in track], [p[1] for p in track], s=20, marker="x")
+        # end for
 
         # Visualization settings (need to be set every time since they don't are permanent)
         self.ax.set_xlim([self.part_borders[0], self.part_borders[2]])
