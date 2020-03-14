@@ -18,6 +18,8 @@ import sys
 import getopt
 from enum import IntEnum
 from abc import ABC, abstractmethod
+from typing import Optional
+
 
 class Logging(IntEnum):
     NONE = 0
@@ -26,6 +28,16 @@ class Logging(IntEnum):
     WARNING = 3
     INFO = 4
     DEBUG = 5
+
+
+class Limits:
+    def __init__(self):
+        self.x_min = None
+        self.y_min = None
+        self.x_max = None
+        self.y_max = None
+    # end def
+# end class
 
 
 class WeightedDistribution:
@@ -64,8 +76,8 @@ class Particle:
         return self.x, self.y
 
     @classmethod
-    def create_random(cls, count, x1, y1, x2, y2):
-        return [cls(random.uniform(x1, x2), random.uniform(y1, y2)) for _ in range(0, count)]
+    def create_random(cls, count, limits: Limits):
+        return [cls(random.uniform(limits.x_min, limits.x_max), random.uniform(limits.y_min, limits.y_max)) for _ in range(0, count)]
 
     def move_by(self, x, y):
         self.x += x
@@ -99,10 +111,15 @@ class Obj(Particle):
             self.chose_random_direction()
 
 
-class Detection:
+class Position:
+    def __init__(self, x=None, y=None):
+        self.x = x
+        self.y = y
+
+
+class Detection(Position):
     def __init__(self, x, y):
-        self.x = None
-        self.y = None
+        super().__init__(x, y)
 
 
 class Frame:
@@ -111,16 +128,6 @@ class Frame:
 
     def add_detection(self, detection):
         self.detections.append(detection)
-
-
-class Limits:
-    def __init__(self):
-        self.x_min = None
-        self.y_min = None
-        self.x_max = None
-        self.y_max = None
-    # end def
-# end class
 
 
 class FrameList:
@@ -133,44 +140,38 @@ class FrameList:
     def get_current_frame(self) -> Frame:
         return self.frames[-1]
 
-    def foreach_detection(self, cb_detection):
+    def foreach_detection(self, cb_detection, **kwargs):
         for frame in self.frames:
-            for detection in frame:
-                cb_detection(detection)
+            for detection in frame.detections:
+                cb_detection(detection, **kwargs)
         # end for
+
+    @staticmethod
+    def _update_limit_by_detection(detection, limits: Limits):
+        if limits.x_min is None or detection.x < limits.x_min:
+            limits.x_min = detection.x
+
+        if limits.y_min is None or detection.y < limits.y_min:
+            limits.y_min = detection.y
+
+        if limits.x_max is None or detection.x > limits.x_max:
+            limits.x_max = detection.x
+
+        if limits.y_max is None or detection.y > limits.y_max:
+            limits.y_max = detection.y
+    # end def
 
     def calc_limits(self):
         limits = Limits()
-        
-        # x_min = None
-        # y_min = None
-        # x_max = None
-        # y_max = None
 
-        def check_detection(detection, limits):
-            global x_min, x_max, y_min, y_max
+        self.foreach_detection(self._update_limit_by_detection, limits=limits)
 
-            if x_min is None or detection.x < x_min:
-                x_min = detection.x
-
-            if y_min is None or detection.y < y_min:
-                y_min = detection.y
-
-            if x_max is None or detection.x > x_max:
-                x_max = detection.x
-
-            if y_max is None or detection.y < y_max:
-                y_max = detection.y
-        # end def
-
-        self.foreach_detection(check_detection)
-
-        return x_min, y_min, x_max, y_max
+        return limits
 
     def calc_center(self):
-        x_min, x_max, y_min, y_max = self.calc_limits()
+        limits = self.calc_limits()
 
-        return (x_min + x_max) / 2, (y_min + y_max) / 2
+        return Position(x=(limits.x_min + limits.x_max) / 2, y=(limits.y_min + limits.y_max) / 2)
 
 
 class InputLineHandler(ABC):
@@ -241,24 +242,28 @@ class FileReader:
 
 
 class WGS84ToENUConverter:
-    def __init__(self, frame_list_wgs84: FrameList):
-        self.frame_list_wgs84 = frame_list_wgs84
-
-    def convert(self):
+    @staticmethod
+    def convert(frame_list_wgs84: FrameList, observer: Optional[Position]):
         frame_list_enu = FrameList()
 
-        for frame in self.frame_list_wgs84.frames:
+        if observer is None:
+            observer = frame_list_wgs84.calc_center()
+
+        for frame in frame_list_wgs84.frames:
             frame_list_enu.append_empty_frame()
 
-            for detection in self.frame_list_wgs84.get_current_frame().detections:
-                # convert...XXX
+            for detection in frame.detections:
+                # Convert...
+                e, n, _ = pm.geodetic2enu(np.asarray(detection.x), np.asarray(detection.y), np.asarray(0),
+                                          np.asarray(observer.x), np.asarray(observer.y), np.asarray(0),
+                                          ell=None, deg=True)
+                frame_list_enu.get_current_frame().add_detection(Detection(e, n))
+            # end for
+        # end for
 
-
-
-                frame_list_enu.get_current_frame().add_detection(detection)
-
-
-
+        return frame_list_enu
+    # end def
+# end class
 
 
 class Simulator:
@@ -266,16 +271,17 @@ class Simulator:
         self.fn_in = fn_in
         self.fn_out = fn_out
         self.n_part = n_part
-        self.speed = speed
         self.s_gauss = s_gauss
+        self.speed = speed
         self.coords_x = []
         self.coords_y = []
         self.coords_idx = []
+        self.frame_list = None
 
         self.refresh = True
         self.particles = []
         self.step = 0
-        self.part_borders = [0, 0, 0, 0]
+        self.part_borders: Optional[Limits] = None
         self.m_x = None
         self.m_y = None
         self.m_confident = False
@@ -283,8 +289,7 @@ class Simulator:
         self.obj = None
         self.next = False
         self.cid = None
-        self.observer_x = None
-        self.observer_y = None
+        self.observer = None
         self.manual_points = []
         self.verbosity = verbosity
 
@@ -309,67 +314,38 @@ class Simulator:
 
     def processing(self):
         # 1. Read all measurements from file
-
-        fr = FileReader(self.fn_in)
-        ilh_lli = InputLineHandlerLatLonIdx()
-        fr.read(ilh_lli)
-
-        self.frame_list = ilh_lli.frame_list
-
-
-
-
-        coords_x = []
-        coords_y = []
-        with open(self.fn_in, 'r') as file:
-            while True:
-                # Get next line from file
-                line = file.readline()
-
-                # if line is empty end of file is reached
-                if not line:
-                    break
-                else:
-                    fields = line.split(" ")
-
-                    if len(fields) == 2:  # Only valid lines
-                        coords_x.append(float(fields[0]))
-                        coords_y.append(float(fields[1]))
-                    # end if
-                # end if
-            # end while
-        # end with
+        file_reader = FileReader(self.fn_in)
+        line_handler = InputLineHandlerLatLonIdx()
+        file_reader.read(line_handler)
+        self.frame_list = line_handler.frame_list
 
         # Convert from WGS84 to ENU, with its origin at the center of all points
-        self.observer_x = (max(coords_x) + min(coords_x)) / 2
-        self.observer_y = (max(coords_y) + min(coords_y)) / 2
+        self.observer = self.frame_list.calc_center()
 
-        for i in range(len(coords_x)):
-            e, n, _ = pm.geodetic2enu(np.asarray(coords_x[i]), np.asarray(coords_y[i]), np.asarray(0),
-                                      np.asarray(self.observer_x), np.asarray(self.observer_y), np.asarray(0), ell=None, deg=True)
-            self.coords_x.append(e)
-            self.coords_y.append(n)
-        # end for
+        self.frame_list = WGS84ToENUConverter.convert(frame_list_wgs84=self.frame_list, observer=self.observer)
+
+        # Add coordinates to coords-array just for compatibility XXX
+        def add_detection_to_coords(detection: Detection):
+            self.coords_x.append(detection.x)
+            self.coords_y.append(detection.y)
+        # end def
+
+        self.frame_list.foreach_detection(add_detection_to_coords)
 
         # Get the borders around the points for creating new particles later on
-        self.part_borders[0] = min(self.coords_x)
-        self.part_borders[1] = min(self.coords_y)
-        self.part_borders[2] = max(self.coords_x)
-        self.part_borders[3] = max(self.coords_y)
+        self.part_borders = self.frame_list.calc_limits()
 
         # 2. Generate many particles
-        self.particles = Particle.create_random(self.n_part, *self.part_borders)
+        self.particles = Particle.create_random(self.n_part, self.part_borders)
 
         # 3. Generate a robot
         # robbie = Robot(world)
         self.obj = Obj()
 
         # 4. Simulation loop
-        step = 0
         while True:
-            step += 1
             if self.verbosity >= Logging.INFO:
-                print("Step {}".format(step))
+                print("Step {}".format(self.step + 1))
 
             # Wait for Return-Key-Press (console) of mouse click (GUI)
             while not self.next:
@@ -442,7 +418,7 @@ class Simulator:
                 for _ in range(len(self.particles)):
                     p = dist.pick()
                     if p is None:  # No pick b/c all totally improbable
-                        new_particle = Particle.create_random(1, *self.part_borders)[0]
+                        new_particle = Particle.create_random(1, self.part_borders)[0]
                         cnt += 1
                     else:
                         new_particle = p
@@ -517,7 +493,7 @@ class Simulator:
 
             e = event.xdata
             n = event.ydata
-            lat, lon, _ = pm.enu2geodetic(e, n, np.asarray(0), np.asarray(self.observer_x), np.asarray(self.observer_y),
+            lat, lon, _ = pm.enu2geodetic(e, n, np.asarray(0), np.asarray(self.observer.x), np.asarray(self.observer.y),
                                           np.asarray(0), ell=None, deg=True)
 
             print("{} {} {}".format(lat, lon, len(self.manual_points)))
@@ -600,8 +576,8 @@ class Simulator:
         # end for
 
         # Visualization settings (need to be set every time since they don't are permanent)
-        self.ax.set_xlim([self.part_borders[0], self.part_borders[2]])
-        self.ax.set_ylim([self.part_borders[1], self.part_borders[3]])
+        self.ax.set_xlim([self.part_borders.x_min, self.part_borders.x_max])
+        self.ax.set_ylim([self.part_borders.y_min, self.part_borders.y_max])
         self.ax.set_aspect('equal', 'datalim')
         self.ax.grid(False)
 
@@ -724,4 +700,3 @@ def main(argv):
 
 if __name__ == "__main__":
     main(sys.argv)
-
