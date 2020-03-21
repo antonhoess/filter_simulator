@@ -3,7 +3,7 @@ from typing import List, Optional
 from abc import ABC, abstractmethod
 import os
 
-from common import FrameList, Detection
+from .common import FrameList, Detection
 
 
 class InputLineHandler(ABC):

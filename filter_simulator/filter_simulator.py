@@ -11,9 +11,9 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import matplotlib.backend_bases
 
-from common import Logging, SimulationDirection, Limits, Position, Detection, FrameList, WGS84ToENUConverter
-from window_helper import WindowMode, LimitsMode, WindowModeChecker
-from io_helper import FileReader, InputLineHandlerLatLonIdx
+from .common import Logging, SimulationDirection, Limits, Position, Detection, FrameList, WGS84ToENUConverter
+from .window_helper import WindowMode, LimitsMode, WindowModeChecker
+from .io_helper import FileReader, InputLineHandlerLatLonIdx
 
 
 class FilterSimulator(ABC):

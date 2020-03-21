@@ -14,8 +14,8 @@ from sklearn.cluster import MeanShift
 from matplotlib.patches import Ellipse
 import seaborn as sns
 
-from common import Logging, Limits, Position, Frame
-from filter_simulator import FilterSimulator
+from filter_simulator.common import Logging, Limits, Position, Frame
+from filter_simulator.filter_simulator import FilterSimulator
 
 
 class WeightedDistribution:

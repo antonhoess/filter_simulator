@@ -1,5 +1,6 @@
 from enum import IntEnum
-from common import Logging
+
+from .common import Logging
 
 
 class WindowMode(IntEnum):
