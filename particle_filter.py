@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 
 import matplotlib.pyplot as plt
@@ -44,6 +44,15 @@ class SimulationDirection(IntEnum):
 # end class
 
 
+class LimitsMode(IntEnum):
+    ALL_DETECTIONS_INIT_ONLY = 0
+    ALL_DETECTIONS_FIXED_UPDATE = 1
+    ALL_CANVAS_ELEMENTS_DYN_UPDATE = 2
+    MANUAL_AREA_INIT_ONLY = 3
+    MANUAL_AREA_FIXED_UPDATE = 4
+# end class
+
+
 class Limits:
     def __init__(self, x_min=None, y_min=None, x_max=None, y_max=None):
         self.x_min = x_min
@@ -55,7 +64,7 @@ class Limits:
 
 
 class WindowModeChecker:
-    def __init__(self, default_window_mode: WindowMode, verbosity: Logging = 0):
+    def __init__(self, default_window_mode: WindowMode, verbosity: Logging = Logging.NONE):
         self.window_mode = default_window_mode
         self.control_shift_pressed = False
         self.control_shift_left_click_cnt = 0
@@ -66,7 +75,7 @@ class WindowModeChecker:
 
     @staticmethod
     def key_is_ctrl_shift(key):
-        # shift+control #ctrl+shift
+        # shift+control or ctrl+shift
         if "shift" in key and ("control" in key or "ctrl" in key):
             return True
         else:
@@ -88,16 +97,13 @@ class WindowModeChecker:
         if action == "key_press_event":
             if self.key_is_ctrl_shift(event.key):
                 self.control_shift_pressed = True
-
-                if self.verbosity >= Logging.DEBUG:
-                    print("key_press_event: " + event.key)
+                self.print_verbose(Logging.DEBUG, "key_press_event: " + event.key)
             # end if
         # end if
 
         if action == "key_release_event":
             if self.key_is_ctrl_shift(event.key):
-                if self.verbosity >= Logging.DEBUG:
-                    print("key_release_event: " + event.key)
+                self.print_verbose(Logging.DEBUG, "key_release_event: " + event.key)
 
                 if self.control_shift_left_click_cnt >= 3:
                     if self.window_mode == WindowMode.SIMULATION:
@@ -105,8 +111,8 @@ class WindowModeChecker:
                     else:
                         self.window_mode = WindowMode.SIMULATION
                     # end if
-                    if self.verbosity >= Logging.DEBUG:
-                        print("Changed window mode to {}.".format(WindowMode(self.window_mode).name))
+
+                    self.print_verbose(Logging.DEBUG, "Changed window mode to {}.".format(WindowMode(self.window_mode).name))
                 # end if
                 self.control_shift_left_click_cnt = 0
                 self.control_shift_pressed = False
@@ -192,61 +198,131 @@ class Position:
         self.x = x
         self.y = y
 
+    def __str__(self):
+        return "x={}, y={}".format(self.x, self.y)
+
 
 class Detection(Position):
     def __init__(self, x, y):
         super().__init__(x, y)
 
+    def __str__(self):
+        return "x={}, y={}".format(self.x, self.y)
+
+
+class FrameIterator:
+    def __init__(self, frame):
+        self._frame = frame
+        self._index = 0
+
+    def __next__(self):
+        if self._index < len(self._frame.get_detections()):
+            result = self._frame[self._index]
+            self._index += 1
+
+            return result
+
+        # End of iteration
+        raise StopIteration
+# end class
+
 
 class Frame:
     def __init__(self):
-        self.detections = []
+        self._detections = []
+
+    def __iter__(self):
+        return FrameIterator(self)
+
+    def __getitem__(self, index):
+        return self._detections[index]
+
+    def __len__(self):
+        return len(self._detections)
+
+    def __str__(self):
+        return "Frame with {} detections".format(len(self))
 
     def add_detection(self, detection: Detection):
-        self.detections.append(detection)
+        self._detections.append(detection)
 
     def del_last_detection(self):
-        if len(self.detections) > 0:
-            del self.detections[-1]
+        if len(self._detections) > 0:
+            del self._detections[-1]
     # end def
 
     def del_all_detections(self):
-        for _ in reversed(range(len(self.detections))):  # reverse() maybe might make sense at a later point
-            del self.detections[-1]
+        for _ in reversed(range(len(self))):  # reverse() maybe might make sense at a later point
+            del self._detections[-1]
     # end def
+
+    def get_detections(self):
+        return self._detections
+
+
+class FrameListIterator:
+    def __init__(self, frame_list):
+        self._frame_list = frame_list
+        self._index = 0
+
+    def __next__(self):
+        if self._index < len(self._frame_list.get_frames()):
+            result = self._frame_list[self._index]
+            self._index += 1
+
+            return result
+
+        # End of iteration
+        raise StopIteration
+# end class
 
 
 class FrameList:
     def __init__(self):
-        self.frames = []
+        self._frames = []
+
+    def __iter__(self):
+        return FrameListIterator(self)
+
+    def __getitem__(self, index):
+        return self._frames[index]
+
+    def __len__(self):
+        return len(self._frames)
+
+    def __str__(self):
+        return "FrameList with {} frames and {} detections total".format(len(self), self.get_number_of_detections())
 
     def add_empty_frame(self):
-        self.frames.append(Frame())
+        self._frames.append(Frame())
 
     def del_last_frame(self):
-        if len(self.frames) > 0:
+        if len(self._frames) > 0:
             self.get_current_frame().del_all_detections()
-            del self.frames[-1]
+            del self._frames[-1]
         # end if
 
+    def get_frames(self):
+        return self._frames
+
     def get_current_frame(self) -> Frame:
-        if len(self.frames) > 0:
-            return self.frames[-1]
+        if len(self._frames) > 0:
+            return self._frames[-1]
         else:
             return None
 
     def get_number_of_detections(self):
         n = 0
 
-        for frame in self.frames:
-            n += len(frame.detections)
+        for frame in self._frames:
+            n += len(frame)
         # end for
 
         return n
 
     def foreach_detection(self, cb_detection, **kwargs):
-        for frame in self.frames:
-            for detection in frame.detections:
+        for frame in self._frames:
+            for detection in frame:
                 cb_detection(detection, **kwargs)
         # end for
 
@@ -357,10 +433,10 @@ class WGS84ToENUConverter:
         if observer is None:
             observer = frame_list_wgs84.calc_center()
 
-        for frame in frame_list_wgs84.frames:
+        for frame in frame_list_wgs84:
             frame_list_enu.add_empty_frame()
 
-            for detection in frame.detections:
+            for detection in frame:
                 # Convert...
                 e, n, _ = pm.geodetic2enu(np.asarray(detection.x), np.asarray(detection.y), np.asarray(0),
                                           np.asarray(observer.x), np.asarray(observer.y), np.asarray(0),
@@ -375,21 +451,24 @@ class WGS84ToENUConverter:
 
 
 class Simulator:
-    def __init__(self, fn_in, fn_out, n_part, s_gauss, speed, verbosity, observer):
+    def __init__(self, fn_in, fn_out, limits, n_part, s_gauss, speed, verbosity, observer):
         self.fn_in = fn_in
         self.fn_out = fn_out
         self.n_part = n_part
         self.s_gauss = s_gauss
         self.speed = speed
-        self.coords_x = []
-        self.coords_y = []
-        self.coords_idx = []
-        self.frame_list = FrameList()
+        self.frames = FrameList()
+        self.cur_frame = None
 
-        self.refresh = True
+        self.refresh = False
         self.particles = []
-        self.step = 0
-        self.part_borders = Limits(-10, -10, 10, 10)
+        self.step = -1
+        self.limits_manual = limits
+        self.det_borders = self.limits_manual
+        self.limits_mode: LimitsMode = LimitsMode.ALL_DETECTIONS_INIT_ONLY
+        self.limits_mode_inited = False
+        self.x_lim = (0, 0)
+        self.y_lim = (0, 0)
         self.m_x = None
         self.m_y = None
         self.m_confident = False
@@ -398,7 +477,7 @@ class Simulator:
         self.observer = observer
         self.simulation_direction = SimulationDirection.FORWARD
         self.window_mode_checker = WindowModeChecker(default_window_mode=WindowMode.SIMULATION, verbosity=verbosity)
-        self.manual_points = FrameList()
+        self.manual_frames = FrameList()
         self.verbosity = verbosity
 
     def _cb_keyboard(self):
@@ -418,6 +497,38 @@ class Simulator:
             except Exception as e:
                 print("Invalid command. Exception: {}".format(e))
 
+    def set_next_step(self):
+        if self.simulation_direction == SimulationDirection.FORWARD:
+            if self.step < (len(self.frames) - 1):
+                self.step += 1
+                return True
+            # end if
+        else:
+            if self.step > 0:
+                self.step -= 1
+                return True
+            # end if
+        # end if
+
+        return False
+
+    def wait_for_valid_next_step(self):
+        while True:
+            # Wait for Return-Key-Press (console) of mouse click (GUI)
+            while not self.next:
+                time.sleep(0.1)
+
+            self.next = False
+
+            # Only continue when the next requested step is valid, e.g. it is within its boundaries
+            if self.set_next_step():
+                break
+        # end while
+
+    def print_verbose(self, verbosity, message):
+        if self.verbosity >= verbosity:
+            print(message)
+
     def processing(self):
         if not os.path.isfile(self.fn_in):
             return
@@ -426,90 +537,75 @@ class Simulator:
         file_reader = FileReader(self.fn_in)
         line_handler = InputLineHandlerLatLonIdx()
         file_reader.read(line_handler)
-        self.frame_list = line_handler.frame_list
+        self.frames = line_handler.frame_list
 
-        if len(self.frame_list.frames) == 0:
+        if len(self.frames) == 0:
             return
 
         # Convert from WGS84 to ENU, with its origin at the center of all points
         if self.observer is None:
-            self.observer = self.frame_list.calc_center()
+            self.observer = self.frames.calc_center()
 
-        self.frame_list = WGS84ToENUConverter.convert(frame_list_wgs84=self.frame_list, observer=self.observer)
-
-        # Add coordinates to coords-array just for compatibility XXX
-        def add_detection_to_coords(detection: Detection):
-            self.coords_x.append(detection.x)
-            self.coords_y.append(detection.y)
-        # end def
-
-        self.frame_list.foreach_detection(add_detection_to_coords)
+        self.frames = WGS84ToENUConverter.convert(frame_list_wgs84=self.frames, observer=self.observer)
 
         # Get the borders around the points for creating new particles later on
-        self.part_borders = self.frame_list.calc_limits()
+        self.det_borders = self.frames.calc_limits()
 
         # 2. Generate many particles
-        self.particles = Particle.create_random(self.n_part, self.part_borders)
+        self.particles = Particle.create_random(self.n_part, self.det_borders)
 
         # 3. Generate a robot
         # robbie = Robot(world)
 
         # 4. Simulation loop
         while True:
-            if self.verbosity >= Logging.INFO:
-                print("Step {}".format(self.step + 1))
-
-            # Wait for Return-Key-Press (console) of mouse click (GUI)
-            while not self.next:
-                time.sleep(0.1)
-
-            self.next = False
-
-            # 4.1 Read Robbie's sensor:
-            #     i.e., get the distance r_d to the nearest beacon
-            #    r_d = robbie.read_sensor(world)
-            #self.obj.x = self.coords_x[self.step]
-            #self.obj.y = self.coords_y[self.step]
-            if self.simulation_direction == SimulationDirection.FORWARD:
-                if self.step < (len(self.frame_list.frames) - 1):
-                    self.step += 1
-            else:
-                if self.step > 0:
-                    self.step -= 1
+            # Calculate mean shift
+            clustering = True
+            if clustering:
+                cluster_samples = np.array([[p.x, p.y] for p in self.particles])
+                clust = MeanShift(bandwidth=10).fit(cluster_samples)
+                self.cluster_centers_ = clust.cluster_centers_
+                self.print_verbose(Logging.DEBUG, clust.labels_)
+                self.print_verbose(Logging.DEBUG, clust.cluster_centers_)
             # end if
-
-            # 4.2 Update particle weight according to how good every particle matches
-            #     Robbie's sensor reading
-            for p in self.particles:
-                # get distance of particle to nearest beacon
-                d_x = p.x - self.coords_x[self.step]
-                d_y = p.y - self.coords_y[self.step]
-                p_d = math.sqrt(d_x * d_x + d_y * d_y)
-                p.w = self.w_gauss(p_d, self.s_gauss)  # XXX
 
             # 4.3 Compute weighted mean of particles (gray circle)
             self.m_x, self.m_y, self.m_confident = self.compute_mean_point()
 
-            # Mean shift XXX
-            X = np.array([[p.x, p.y] for p in self.particles])
-
-            clustering = True
-            if clustering:
-                clust = MeanShift(bandwidth=10).fit(X)
-                self.cluster_centers_ = clust.cluster_centers_
-                if self.verbosity >= Logging.DEBUG:
-                    print(clust.labels_)
-                    print(clust.cluster_centers_)
-                # end if
-            # end if
-
-            # 4.4 show particles, show mean point, show Robbie
             # Wait until drawing has finished (do avoid changing e.g. particles
             # before they are drawn in their current position)
             self.refresh = True
 
             while self.refresh:
                 time.sleep(0.1)
+
+            # Wait for a valid next step
+            self.wait_for_valid_next_step()
+            self.print_verbose(Logging.INFO, "Step {}".format(self.step))
+
+            # Set current frame
+            self.cur_frame = self.frames[self.step]
+
+            # 4.2 Update particle weight according to how good every particle matches
+            #     Robbie's sensor reading
+            for p in self.particles:
+                w_total = .0
+
+                for det in self.cur_frame:
+                    # get distance of particle to nearest beacon
+                    d_x = p.x - det.x
+                    d_y = p.y - det.y
+                    p_d = math.sqrt(d_x * d_x + d_y * d_y)
+                    w_total += self.w_gauss(p_d, self.s_gauss)
+                # end for
+
+                n_vec = len(self.cur_frame)
+
+                if n_vec > 0:
+                    w_total /= n_vec
+
+                p.w = w_total
+            # end for
 
             # 4.5 Resampling follows here:
             resampling = True
@@ -518,8 +614,7 @@ class Simulator:
 
                 # 4.5.1 Normalise weights
                 nu = sum(p.w for p in self.particles)
-                if self.verbosity >= Logging.DEBUG:
-                    print("nu = {}".format(nu))
+                self.print_verbose(Logging.DEBUG, "nu = {}".format(nu))
 
                 if nu:
                     for p in self.particles:
@@ -528,30 +623,25 @@ class Simulator:
 
                 # 4.5.2 create a weighted distribution, for fast picking
                 dist = WeightedDistribution(self.particles)
-
-                if self.verbosity >= Logging.INFO:
-                    print("# particles: {}".format(len(self.particles)))
+                self.print_verbose(Logging.INFO, "# particles: {}".format(len(self.particles)))
 
                 cnt = 0
                 for _ in range(len(self.particles)):
                     p = dist.pick()
                     if p is None:  # No pick b/c all totally improbable
-                        new_particle = Particle.create_random(1, self.part_borders)[0]
+                        new_particle = Particle.create_random(1, self.det_borders)[0]
                         cnt += 1
                     else:
-                        new_particle = p
-                        new_particle.w = 1
+                        new_particle = Particle(p.x, p.y, 1.)
                     # end if
 
-                    x, y = self.add_noise(1, 0, 0)
+                    x, y = self.add_noise(.1, 0, 0)
                     new_particle.move_by(x, y)
 
                     new_particles.append(new_particle)
                 # end for
 
-                if self.verbosity >= Logging.INFO:
-                    print("# particles newly created: {}".format(cnt))
-
+                self.print_verbose(Logging.INFO, "# particles newly created: {}".format(cnt))
                 self.particles = new_particles
             # end if
 
@@ -564,16 +654,31 @@ class Simulator:
             # end for
 
             # 4.5.4 Move all particles according to belief of movement
+            d_x = .0
+            d_y = .0
             for p in self.particles:
-                d_x = p.x - self.coords_x[self.step]
-                d_y = p.y - self.coords_y[self.step]
+
+                # Add all vectors
+                for det in self.cur_frame:
+                    d_x += (det.x - p.x)
+                    d_y += (det.y - p.y)
+                # end for
+
+                # Calculate resulting vector
+                n_vec = len(self.cur_frame)
+                if n_vec > 0:
+                    d_x = d_x / n_vec
+                    d_y = d_y / n_vec
+                # end if
+
                 p_d = math.sqrt(d_x * d_x + d_y * d_y)
-                angle = math.atan2(self.coords_y[self.step] - p.y, self.coords_x[self.step] - p.x)
+                angle = math.atan2(d_y, d_x)
                 # p_d = 1.0  # XXX
                 # p.x += self.speed * p_d * math.cos(angle)
                 # p.y += self.speed * p_d * math.sin(angle)
                 p.move_by(min(self.speed, p_d) * math.cos(angle), min(self.speed, p_d) * math.sin(angle))
             # end for
+        # end while
 
     def run(self):
         # Processing thread
@@ -633,8 +738,7 @@ class Simulator:
             #   * Ctrl: Forwards
             #   * Shift: Backwards
             if event.button == 3:  # Right click
-                if self.verbosity >= Logging.DEBUG:
-                    print("Right click")
+                self.print_verbose(Logging.DEBUG, "Right click")
 
                 if event.key == "control":
                     self.simulation_direction = SimulationDirection.FORWARD
@@ -663,28 +767,24 @@ class Simulator:
 
                     # print("{} {} {}".format(lat, lon, len(self.manual_points)))
                     # Add initial frame
-                    if len(self.manual_points.frames) == 0:
-                        self.manual_points.add_empty_frame()
+                    if len(self.manual_frames) == 0:
+                        self.manual_frames.add_empty_frame()
 
-                    self.manual_points.get_current_frame().add_detection(Detection(event.xdata, event.ydata))
-
-                    if self.verbosity >= Logging.INFO:
-                        print("Add point {:4f}, {:4f} to frame # {}".format(event.xdata, event.ydata, len(self.manual_points.frames)))
+                    self.manual_frames.get_current_frame().add_detection(Detection(event.xdata, event.ydata))
+                    self.print_verbose(Logging.INFO, "Add point {:4f}, {:4f} to frame # {}".format(event.xdata, event.ydata, len(self.manual_frames)))
 
                 elif event.key == "shift":
-                    self.manual_points.add_empty_frame()
-
-                    if self.verbosity >= Logging.INFO:
-                        print("Add new track (# {})".format(len(self.manual_points.frames)))
+                    self.manual_frames.add_empty_frame()
+                    self.print_verbose(Logging.INFO, "Add new track (# {})".format(len(self.manual_frames)))
                 # end if
 
             elif event.button == 3:  # Right click
                 if event.key == "control":
-                    if self.manual_points.get_current_frame() is not None:
-                        self.manual_points.get_current_frame().del_last_detection()
+                    if self.manual_frames.get_current_frame() is not None:
+                        self.manual_frames.get_current_frame().del_last_detection()
 
                 elif event.key == "shift":
-                    self.manual_points.del_last_frame()
+                    self.manual_frames.del_last_frame()
 
                 elif WindowModeChecker.key_is_ctrl_shift(event.key):
                     fn_out = self.fn_out
@@ -696,15 +796,14 @@ class Simulator:
                             break
                     # end for
 
-                    if self.verbosity >= Logging.INFO:
-                        print("Write manual points ({} frames with {} detections) to file {}".format(len(self.manual_points.frames), self.manual_points.get_number_of_detections(), fn_out))
+                    self.print_verbose(Logging.INFO, "Write manual points ({} frames with {} detections) to file {}".format(len(self.manual_frames), self.manual_frames.get_number_of_detections(), fn_out))
 
                     with open(fn_out, "w") as file:
                         frame_nr = 0
-                        for frame in self.manual_points.frames:
+                        for frame in self.manual_frames:
                             frame_nr += 1
 
-                            for detection in frame.detections:
+                            for detection in frame:
                                 lat, lon, _ = pm.enu2geodetic(detection.x, detection.y, np.asarray(0), np.asarray(self.observer.x),
                                                               np.asarray(self.observer.y), np.asarray(0), ell=None,
                                                               deg=True)
@@ -729,17 +828,66 @@ class Simulator:
         return accum
 
     def calc_density_map(self, grid_res=100):
-        x = np.linspace(self.part_borders[0], self.part_borders[2], grid_res)
-        y = np.linspace(self.part_borders[1], self.part_borders[3], grid_res)
+        x = np.linspace(self.det_borders.x_min, self.det_borders.x_max, grid_res)
+        y = np.linspace(self.det_borders.y_min, self.det_borders.y_max, grid_res)
 
         X, Y = np.meshgrid(x, y)
         Z = self.calc_density(X, Y)
 
         return X, Y, Z
 
+    def update_window_limits(self):
+        set_det_borders = False
+        set_prev_limits = False
+        set_manual_limits = False
+
+        if self.limits_mode == LimitsMode.ALL_DETECTIONS_INIT_ONLY:
+            if not self.limits_mode_inited:
+                set_det_borders = True
+                self.limits_mode_inited = True
+            else:
+                set_prev_limits = True
+            # end if
+
+        elif self.limits_mode == LimitsMode.ALL_DETECTIONS_FIXED_UPDATE:
+            set_det_borders = True
+
+        elif self.limits_mode == LimitsMode.ALL_CANVAS_ELEMENTS_DYN_UPDATE:
+            pass
+
+        elif self.limits_mode == LimitsMode.MANUAL_AREA_INIT_ONLY:
+            if not self.limits_mode_inited:
+                set_manual_limits = True
+                self.limits_mode_inited = True
+            else:
+                set_prev_limits = True
+            # end if
+
+        elif self.limits_mode == LimitsMode.MANUAL_AREA_FIXED_UPDATE:
+            set_manual_limits = True
+        # end if
+
+        if set_det_borders:
+            self.ax.set_xlim([self.det_borders.x_min, self.det_borders.x_max])
+            self.ax.set_ylim([self.det_borders.y_min, self.det_borders.y_max])
+
+        elif set_prev_limits:
+            self.ax.set_xlim(self.x_lim)
+            self.ax.set_ylim(self.y_lim)
+
+        elif set_manual_limits:
+            self.ax.set_xlim([self.limits_manual.x_min, self.limits_manual.x_max])
+            self.ax.set_ylim([self.limits_manual.y_min, self.limits_manual.y_max])
+        # end if
+
     def update_window(self, _frame=None):
         if not self.refresh or self.ax is None:
             return
+
+        # Store current limits for resetting it the next time
+        # (after drawing the elements, which might unwantedly change the limits)
+        self.x_lim = self.ax.get_xlim()
+        self.y_lim = self.ax.get_ylim()
 
         self.ax.clear()
 
@@ -754,9 +902,9 @@ class Simulator:
             sns.kdeplot(X, Y, shade=True, ax=self.ax)
         # end if
 
-        # All detections
-        for frame in self.frame_list.frames:
-            self.ax.scatter([det.x for det in frame.detections], [det.y for det in frame.detections], edgecolor="green", marker="o")
+        # All detections - each frame's detections in a different color
+        for frame in self.frames:
+            self.ax.scatter([det.x for det in frame], [det.y for det in frame], edgecolor="green", marker="o")
         # end for
 
         # Weighted mean
@@ -771,29 +919,32 @@ class Simulator:
             self.ax.scatter([cc[0] for cc in self.cluster_centers_],
                             [cc[1] for cc in self.cluster_centers_], s=25, edgecolor="orange", marker="x")
 
-        if len(self.frame_list.frames) > self.step:
+        if self.cur_frame is not None:
             # Current detections
-            det_pos_x = [d.x for d in self.frame_list.frames[self.step].detections]
-            det_pos_y = [d.y for d in self.frame_list.frames[self.step].detections]
+            det_pos_x = [det.x for det in self.cur_frame]
+            det_pos_y = [det.y for det in self.cur_frame]
             self.ax.scatter(det_pos_x, det_pos_y, s=100, c="red", marker="x")
 
             # Importance weight Gaussian-kernel covariance ellipse
             ell_radius_x = self.s_gauss
             ell_radius_y = self.s_gauss
-            ellipse = Ellipse((self.coords_x[self.step], self.coords_y[self.step]), width=ell_radius_x * 2,
-                              height=ell_radius_y * 2, facecolor='none', edgecolor="black")
-            self.ax.add_patch(ellipse)
+
+            for det in self.cur_frame:
+                ellipse = Ellipse((det.x, det.y), width=ell_radius_x * 2,
+                                  height=ell_radius_y * 2, facecolor='none', edgecolor="black", linewidth=.5)
+                self.ax.add_patch(ellipse)
+            # end for
         # end if
 
         # Manually set points
-        for frame in self.manual_points.frames:
-            self.ax.scatter([det.x for det in frame.detections], [det.y for det in frame.detections], s=20, marker="x")
-            self.ax.plot([det.x for det in frame.detections], [det.y for det in frame.detections], color="black", linewidth=.5, linestyle="--")
+        for frame in self.manual_frames:
+            self.ax.scatter([det.x for det in frame], [det.y for det in frame], s=20, marker="x")
+            self.ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5, linestyle="--")
         # end for
 
         # Visualization settings (need to be set every time since they don't are permanent)
-        self.ax.set_xlim([self.part_borders.x_min, self.part_borders.x_max])
-        self.ax.set_ylim([self.part_borders.y_min, self.part_borders.y_max])
+        self.update_window_limits()
+
         self.ax.set_aspect('equal', 'datalim')
         self.ax.grid(False)
 
@@ -869,19 +1020,38 @@ def main(argv):
 
     # Read command line arguments
     def usage():
-        return "{} -g <GAUSS_SIGMA> -h -i <INPUT_FILE> -n <N_PARTICLES> -o <OUTPUT_FILE> -p <OBSERVER_POSITION> -s <SPEED> -v <VERBOSITY>\n".format(argv[0]) + \
-               "-g: Sigma of Gaussian importance weight kernel.\n" + \
+        return "{} <PARAMETERS>\n".format(os.path.basename(argv[0])) + \
+               "\n" + \
+               "-g <GAUSS_SIGMA>:\n" + \
+               "    Sigma of Gaussian importance weight kernel.\n" + \
+               "\n" + \
                "-h: This help.\n" + \
-               "-i: Input file to parse with coordinates in WGS 84 system." + \
-               "-n: Number of particles.\n" + \
-               "-o: Output file to write manually set coordinates converted to WGS84\n" + \
-               "-p: Position of the observer in WGS84. Can be used instead of the center of the detections or in case of only manually creating detections, which needed to be transformed back to WGS84.\n" + \
-               "-s: Speed of the object.\n" + \
-               "-v: Verbosity level. 0 = Silent [Default], >0 = increasing verbosity.\n"
+               "\n" + \
+               "-i <INPUT_FILE>:\n" + \
+               "    Input file to parse with coordinates in WGS 84 system.\n" + \
+               "\n" + \
+               "-l <LIMITS>:\n" + \
+               "    Fixed limits for the canvas in format 'X_MIN;Y_MIN;X_MAX;Y_MAX'.\n" + \
+               "\n" + \
+               "-n <N_PARTICLES>:\n" + \
+               "    Number of particles.\n" + \
+               "\n" + \
+               "-o <OUTPUT_FILE>:\n" \
+               "    Output file to write manually set coordinates converted to WGS84\n" + \
+               "\n" + \
+               "-p <OBSERVER_POSITION>:\n" \
+               "    Position of the observer in WGS84. Can be used instead of the center of the detections or in case of only manually creating detections, which needed to be transformed back to WGS84.\n" + \
+               "\n" + \
+               "-s <SPEED>:\n" \
+               "    Speed of the object.\n" + \
+               "\n" + \
+               "-v <VERBOSITY>:\n" \
+               "    Verbosity level. 0 = Silent [Default], >0 = decreasing verbosity.\n"
     # end def
 
     inputfile = ""
     outputfile = "out.lst"
+    limits = Limits(-10, -10, 10, 10)
     n_particles = 100
     sigma = 20.
     speed = 1.
@@ -889,7 +1059,7 @@ def main(argv):
     observer = None
 
     try:
-        opts, args = getopt.getopt(argv[1:], "g:hi:n:o:p:s:v")
+        opts, args = getopt.getopt(argv[1:], "g:hi:l:n:o:p:s:v")
     except getopt.GetoptError as e:
         print("Reading parameters caused error {}".format(e))
         print(usage())
@@ -898,25 +1068,36 @@ def main(argv):
 
     for opt, arg in opts:
         if opt == "-g":
-            sigma = arg
+            sigma = float(arg)
+
         elif opt == '-h':
             print(usage())
             sys.exit()
+
         elif opt == "-i":
             inputfile = arg
+
+        elif opt == "-l":
+            fields = arg.split(";")
+            if len(fields) == 4:
+                limits = Limits(float(fields[0]), float(fields[1]), float(fields[2]), float(fields[3]))
+
         elif opt == "-n":
-            n_particles = arg
+            n_particles = int(arg)
+
         elif opt == "-o":
             outputfile = arg
+
         elif opt == "-p":
             fields = arg.split(";")
             if len(fields) >= 2:
                 observer = Position(float(fields[0]), float(fields[1]))
+
         elif opt == "-v":
-            verbosity = arg
+            verbosity = int(arg)
     # end for
 
-    sim = Simulator(fn_in=inputfile, fn_out=outputfile, n_part=n_particles, s_gauss=sigma, speed=speed,
+    sim = Simulator(fn_in=inputfile, fn_out=outputfile, limits=limits, n_part=n_particles, s_gauss=sigma, speed=speed,
                     verbosity=verbosity, observer=observer)
     sim.run()
 
