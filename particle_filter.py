@@ -460,7 +460,8 @@ class Simulator:
         self.frames = FrameList()
         self.cur_frame = None
 
-        self.refresh = False
+        self.refresh = threading.Event()
+        self.refresh_finished = threading.Event()
         self.particles = []
         self.step = -1
         self.limits_manual = limits
@@ -574,10 +575,11 @@ class Simulator:
 
             # Wait until drawing has finished (do avoid changing e.g. particles
             # before they are drawn in their current position)
-            self.refresh = True
 
-            while self.refresh:
-                time.sleep(0.1)
+            self.refresh.set()
+
+            self.refresh_finished.wait()
+            self.refresh_finished.clear()
 
             # Wait for a valid next step
             self.wait_for_valid_next_step()
@@ -812,7 +814,7 @@ class Simulator:
                     # end with
             # end if
 
-            self.refresh = True
+            self.refresh.set()
         # end if
 
     def calc_density(self, x, y):
@@ -881,7 +883,10 @@ class Simulator:
         # end if
 
     def update_window(self, _frame=None):
-        if not self.refresh or self.ax is None:
+        self.refresh.wait(50. / 1000)  # This should block all subsequent calls to update_windows, but should be no problem
+        self.refresh.clear()
+
+        if self.ax is None:
             return
 
         # Store current limits for resetting it the next time
@@ -951,7 +956,7 @@ class Simulator:
         self.ax.set_xlabel('east [m]')
         self.ax.set_ylabel('north [m]')
 
-        self.refresh = False
+        self.refresh_finished.set()
     # end def
 
     @staticmethod
