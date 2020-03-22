@@ -5,7 +5,7 @@ import os
 import numpy as np
 import pymap3d as pm
 
-from .common import Frame, FrameList, Position, Detection
+from .common import FrameList, Position, Detection
 
 
 class InputLineHandler(ABC):
@@ -19,9 +19,13 @@ class InputLineHandler(ABC):
 
 class InputLineHandlerLatLonIdx(InputLineHandler):
     def __init__(self) -> None:
-        self.cur_idx: Optional[int] = None
-        self.frame_list: FrameList = FrameList()
+        self.__cur_idx: Optional[int] = None
+        self.__frame_list: FrameList = FrameList()
         super().__init__()
+
+    @property
+    def frame_list(self) -> FrameList:
+        return self.__frame_list
 
     def handle_line(self, line: str) -> None:
         lat: float = .0
@@ -41,13 +45,13 @@ class InputLineHandlerLatLonIdx(InputLineHandler):
         # end if
 
         # Check if we need to add a new frame to the frame list
-        if idx is None or self.cur_idx is None or idx != self.cur_idx:
-            self.cur_idx = idx
-            self.frame_list.add_empty_frame()
+        if idx is None or self.__cur_idx is None or idx != self.__cur_idx:
+            self.__cur_idx = idx
+            self.__frame_list.add_empty_frame()
         # end if
 
         # Add detection from field values to the frame
-        self.frame_list.get_current_frame().add_detection(Detection(lat, lon))
+        self.__frame_list.get_current_frame().add_detection(Detection(lat, lon))
 
         return
     # end def
@@ -56,11 +60,11 @@ class InputLineHandlerLatLonIdx(InputLineHandler):
 
 class FileReader:
     def __init__(self, filename: str) -> None:
-        self.filename: str = filename
+        self.__filename: str = filename
 
     def read(self, input_line_handler: InputLineHandler) -> None:
         try:
-            with open(self.filename, 'r') as file:
+            with open(self.__filename, 'r') as file:
                 while True:
                     # Get next line from file
                     line: str = file.readline()
@@ -75,14 +79,14 @@ class FileReader:
             # end with
 
         except IOError as e:
-            print("Error opening file {}: {}".format(self.filename, e))
+            print("Error opening file {}: {}".format(self.__filename, e))
     # end def
 # end class
 
 
 class FileWriter:
     def __init__(self, filename: str) -> None:
-        self.filename: str = filename
+        self.__filename: str = filename
 
     @staticmethod
     def get_files_in_directory(directory: str) -> List[str]:
@@ -127,7 +131,7 @@ class FileWriter:
         return fn_ret
 
     def write(self, frames: FrameList, observer: Position):
-        with open(self.filename, "w") as file:
+        with open(self.__filename, "w") as file:
             frame_nr: int = 0
 
             for frame in frames:

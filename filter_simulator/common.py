@@ -178,7 +178,7 @@ class FrameList:
         # end for
 
     @staticmethod
-    def _update_limit_by_detection(detection: Detection, limits: Limits) -> None:
+    def __update_limit_by_detection(detection: Detection, limits: Limits) -> None:
         if limits.x_min is None or detection.x < limits.x_min:
             limits.x_min = detection.x
 
@@ -195,7 +195,7 @@ class FrameList:
     def calc_limits(self) -> Limits:
         limits: Limits = Limits()
 
-        self.foreach_detection(self._update_limit_by_detection, limits=limits)
+        self.foreach_detection(self.__update_limit_by_detection, limits=limits)
 
         return limits
 
