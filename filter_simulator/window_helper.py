@@ -67,7 +67,7 @@ class WindowModeChecker:
                         self.window_mode = WindowMode.SIMULATION
                     # end if
 
-                    self.logging.print_verbose(Logging.DEBUG, "Changed window mode to {}.".
+                    self.logging.print_verbose(Logging.INFO, "Changed window mode to {}.".
                                                format(WindowMode(self.window_mode).name))
                 # end if
                 self.control_shift_left_click_cnt = 0

@@ -41,7 +41,7 @@ class WeightedDistribution:
 class Particle:
     def __init__(self, x: float, y: float, w: float = 1., noisy: bool = False) -> None:
         if noisy:
-            x, y = ParticleFilterSimulator.add_some_noise(x, y)
+            x, y = ParticleFilterSimulator.add_noise(0.1, x, y)
 
         self.x: float = x
         self.y: float = y
@@ -244,11 +244,14 @@ class ParticleFilterSimulator(FilterSimulator):
         # All detections - each frame's detections in a different color
         for frame in self.frames:
             self.ax.scatter([det.x for det in frame], [det.y for det in frame], edgecolor="green", marker="o")
+            self.ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5,
+                         linestyle="--")
         # end for
 
         # Weighted mean
-        self.ax.scatter([self.mean.x], [self.mean.y], s=200,
-                        c="gray" if self.m_confident else "pink", edgecolor="black", marker="o")
+        if self.mean is not None:
+            self.ax.scatter([self.mean.x], [self.mean.y], s=200,
+                            c="gray" if self.m_confident else "pink", edgecolor="black", marker="o")
 
         # Particles
         self.ax.scatter([p.x for p in self.particles], [p.y for p in self.particles], s=5, edgecolor="blue", marker="o")
@@ -292,10 +295,6 @@ class ParticleFilterSimulator(FilterSimulator):
     @staticmethod
     def add_noise(level: float, *coords) -> List[float]:
         return [x + random.uniform(-level, level) for x in coords]
-
-    @staticmethod
-    def add_some_noise(*coords) -> List[float]:
-        return ParticleFilterSimulator.add_noise(0.1, *coords)
 
     # This is just a gaussian kernel I pulled out of my hat, to transform
     # values near to robbie's measurement => 1, further away => 0
@@ -392,7 +391,7 @@ def main(argv: List[str]):
     observer: Optional[Position] = None
 
     try:
-        opts, args = getopt.getopt(argv[1:], "g:hi:l:n:o:p:s:v")
+        opts, args = getopt.getopt(argv[1:], "g:hi:l:n:o:p:s:v:")
     except getopt.GetoptError as e:
         print("Reading parameters caused error {}".format(e))
         print(usage())
@@ -427,7 +426,7 @@ def main(argv: List[str]):
                 observer = Position(float(fields[0]), float(fields[1]))
 
         elif opt == "-v":
-            verbosity = Logging(arg)
+            verbosity = Logging(int(arg))
     # end for
 
     sim: ParticleFilterSimulator = ParticleFilterSimulator(fn_in=inputfile, fn_out=outputfile, limits=limits,

@@ -13,11 +13,11 @@ import matplotlib.backend_bases
 
 from .common import Logging, SimulationDirection, Limits, Position, Detection, FrameList, WGS84ToENUConverter
 from .window_helper import WindowMode, LimitsMode, WindowModeChecker
-from .io_helper import FileReader, InputLineHandlerLatLonIdx
+from .io_helper import FileReader, FileWriter, InputLineHandlerLatLonIdx
 
 
 class FilterSimulator(ABC):
-    def __init__(self, fn_in: str, fn_out: str, verbosity: Logging, observer: Position, limits: Limits) -> None:
+    def __init__(self, fn_in: str, fn_out: str, verbosity: Logging, observer: Optional[Position], limits: Limits) -> None:
         self.fn_in: str = fn_in
         self.fn_out: str = fn_out
         self.step: int = -1
@@ -26,7 +26,8 @@ class FilterSimulator(ABC):
         self.simulation_direction: SimulationDirection = SimulationDirection.FORWARD
         self.ax: Optional[matplotlib.axes.Axes] = None
         self.logging: Logging = verbosity
-        self.observer: Position = observer
+        self.observer: Position = observer if observer is not None else Position(0, 0)
+        self.observer_is_set = (observer is not None)
         self.window_mode_checker: WindowModeChecker = WindowModeChecker(default_window_mode=WindowMode.SIMULATION,
                                                                         verbosity=verbosity)
         self.manual_frames: FrameList = FrameList()
@@ -149,10 +150,13 @@ class FilterSimulator(ABC):
                 if event.key == "control":
                     e: float = event.xdata
                     n: float = event.ydata
-                    lat, lon, _ = pm.enu2geodetic(np.array(e), np.array(n), np.asarray(0), np.asarray(self.observer.x),
-                                                  np.asarray(self.observer.y), np.asarray(0), ell=None, deg=True)
 
-                    # print("{} {} {}".format(lat, lon, len(self.manual_points)))
+                    if self.observer is not None:
+                        lat, lon, _ = pm.enu2geodetic(np.array(e), np.array(n), np.asarray(0),
+                                                      np.asarray(self.observer.x), np.asarray(self.observer.y),
+                                                      np.asarray(0), ell=None, deg=True)
+                        # print("{} {} {}".format(lat, lon, len(self.manual_points)))
+
                     # Add initial frame
                     if len(self.manual_frames) == 0:
                         self.manual_frames.add_empty_frame()
@@ -175,35 +179,24 @@ class FilterSimulator(ABC):
                     self.manual_frames.del_last_frame()
 
                 elif WindowModeChecker.key_is_ctrl_shift(event.key):
-                    fn_out: str = self.fn_out
+                    n_seq_max = 99
+                    fn_out = FileWriter.get_next_sequence_filename(".", filename_format=(self.fn_out + "_{:02d}"),
+                                                                   n_seq_max=n_seq_max, fill_gaps=False)
 
-                    for i in range(100):
-                        fn_out = "{}_{:02d}".format(self.fn_out, i)
+                    if fn_out is not None:
+                        self.logging.print_verbose(Logging.INFO,
+                                                   "Write manual points ({} frames with {} detections) to file {}".
+                                                   format(len(self.manual_frames),
+                                                          self.manual_frames.get_number_of_detections(), fn_out))
 
-                        if not os.path.exists(fn_out):
-                            break
-                    # end for
+                        file_writer = FileWriter(fn_out)
+                        file_writer.write(self.manual_frames, self.observer)
+                    else:
+                        self.logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename {} "
+                                                                  "and a max. sequence number of {}. Try to remove "
+                                                                  "some old files.".format(self.fn_out, n_seq_max))
 
-                    self.logging.print_verbose(Logging.INFO,
-                                               "Write manual points ({} frames with {} detections) to file {}".
-                                               format(len(self.manual_frames),
-                                                      self.manual_frames.get_number_of_detections(), fn_out))
-
-                    with open(fn_out, "w") as file:
-                        frame_nr: int = 0
-
-                        for frame in self.manual_frames:
-                            frame_nr += 1
-
-                            for detection in frame:
-                                lat, lon, _ = pm.enu2geodetic(np.array(detection.x), np.array(detection.y),
-                                                              np.asarray(0), np.asarray(self.observer.x),
-                                                              np.asarray(self.observer.y), np.asarray(0), ell=None,
-                                                              deg=True)
-                                file.write("{} {} {}\n".format(lat, lon, frame_nr))
-                        # end for
-                    # end with
-            # end if
+            # end if event.button ...
 
             self.refresh.set()
         # end if
@@ -267,10 +260,10 @@ class FilterSimulator(ABC):
         if len(self.frames) == 0:
             return
 
-        # Convert from WGS84 to ENU, with its origin at the center of all points
-        if self.observer is None:
+        if not self.observer_is_set:
             self.observer = self.frames.calc_center()
 
+        # Convert from WGS84 to ENU, with its origin at the center of all points
         self.frames = WGS84ToENUConverter.convert(frame_list_wgs84=self.frames, observer=self.observer)
 
         # Get the borders around the points for creating new particles later on
