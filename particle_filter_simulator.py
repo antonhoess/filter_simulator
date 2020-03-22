@@ -13,13 +13,14 @@ from datetime import datetime
 from sklearn.cluster import MeanShift
 from matplotlib.patches import Ellipse
 import seaborn as sns
+import copy
 
 from filter_simulator.common import Logging, Limits, Position, Frame
 from filter_simulator.filter_simulator import FilterSimulator
 
 
 class WeightedDistribution:
-    def __init__(self, state) -> None:
+    def __init__(self, state: List[Particle]) -> None:
         accum: float = .0
         self.state: List[Particle] = [p for p in state if p.w > 0]
         self.distribution: List[float] = []
@@ -39,12 +40,11 @@ class WeightedDistribution:
 
 
 class Particle:
-    def __init__(self, x: float, y: float, w: float = 1., noisy: bool = False) -> None:
-        if noisy:
-            x, y = ParticleFilterSimulator.add_noise(0.1, x, y)
-
+    def __init__(self, x: float, y: float, w: float = 1.) -> None:
         self.x: float = x
         self.y: float = y
+        self.vx: float = .0
+        self.vy: float = .0
         self.w: float = w
 
     def __repr__(self) -> str:
@@ -65,43 +65,43 @@ class Particle:
 
 
 class ParticleFilterSimulator(FilterSimulator):
-    def __init__(self, fn_in: str, fn_out: str, limits: Limits, n_part: int, s_gauss: float, speed: float,
+    def __init__(self, fn_in: str, fn_out: str, limits: Limits, n_part: int, s_gauss: float, noise: float, speed: float,
                  verbosity: Logging, observer: Position):
         super().__init__(fn_in, fn_out, verbosity, observer, limits)
 
         self.n_part: int = n_part
         self.s_gauss: float = s_gauss
+        self.noise: float = noise
         self.speed: float = speed
         self.cur_frame: Optional[Frame] = None
         self.particles: List[Particle] = []
-        self.mean: Optional[Position] = None
         self.m_confident: bool = False
         self.cluster_centers: Optional[np.ndarray] = None
+        self.ms_bandwidth: float = .1  # XXX Param?
+        self.use_speed: bool = True  # XXX Param? # If we use speed to update the particle's position, the particle might fly out of the curve, since their value of the gaussian kernel for calculating the importance weight will be less
+        self.resampling: bool = True
 
     def processing(self) -> None:
-        # 2. Generate many particles
+        # Generate many particles
         self.particles = Particle.create_random(self.n_part, self.det_borders)
 
-        # 4. Simulation loop
+        # Simulation loop
         while True:
             # Calculate mean shift
             clustering: bool = True
             if clustering:
                 cluster_samples: np.array = np.array([[p.x, p.y] for p in self.particles])
-                clust: MeanShift = MeanShift(bandwidth=10).fit(cluster_samples)
+                clust: MeanShift = MeanShift(bandwidth=self.ms_bandwidth).fit(cluster_samples)
                 self.cluster_centers: np.ndarray = clust.cluster_centers_
                 self.logging.print_verbose(Logging.DEBUG, clust.labels_)
                 self.logging.print_verbose(Logging.DEBUG, clust.cluster_centers_)
             # end if
 
-            # 4.3 Compute weighted mean of particles (gray circle)
-            self.mean, self.m_confident = self.compute_mean_point()
+            # Draw
+            self.refresh.set()
 
             # Wait until drawing has finished (do avoid changing e.g. particles
             # before they are drawn in their current position)
-
-            self.refresh.set()
-
             self.refresh_finished.wait()
             self.refresh_finished.clear()
 
@@ -112,42 +112,39 @@ class ParticleFilterSimulator(FilterSimulator):
             # Set current frame
             self.cur_frame = self.frames[self.step]
 
-            # 4.2 Update particle weight according to how good every particle matches
-            #     Robbie's sensor reading
+            # 4.2 Update particle weight according to how good every particle matches the nearest detection
             for p in self.particles:
-                w_total: float = .0
+                # Use the detection position nearest to the current particle
+                p_d_min: Optional[float] = None
 
                 for det in self.cur_frame:
-                    # get distance of particle to nearest beacon
                     d_x: float = p.x - det.x
                     d_y: float = p.y - det.y
                     p_d: float = math.sqrt(d_x * d_x + d_y * d_y)
-                    w_total += self.w_gauss(p_d, self.s_gauss)
+
+                    if p_d_min is None or p_d < p_d_min:
+                        p_d_min = p_d
+                    # end if
                 # end for
 
-                n_vec: int = len(self.cur_frame)
-
-                if n_vec > 0:
-                    w_total /= n_vec
-
-                p.w = w_total
+                p.w = self.w_gauss(p_d_min, self.s_gauss)
             # end for
 
-            # 4.5 Resampling follows here:
-            resampling: bool = True
-            if resampling:
+            # Resampling follows here:
+
+            if self.resampling:
                 new_particles: List[Particle] = []
 
-                # 4.5.1 Normalise weights
+                # Normalize weights
                 nu: float = sum(p.w for p in self.particles)
                 self.logging.print_verbose(Logging.DEBUG, "nu = {}".format(nu))
 
-                if nu:
+                if nu > 0:
                     for p in self.particles:
                         p.w = p.w / nu
                 # end if
 
-                # 4.5.2 create a weighted distribution, for fast picking
+                # Create a weighted distribution, for fast picking
                 dist: WeightedDistribution = WeightedDistribution(self.particles)
                 self.logging.print_verbose(Logging.INFO, "# particles: {}".format(len(self.particles)))
 
@@ -159,12 +156,11 @@ class ParticleFilterSimulator(FilterSimulator):
                         new_particle: Particle = Particle.create_random(1, self.det_borders)[0]
                         cnt += 1
                     else:
-                        new_particle = Particle(p.x, p.y, 1.)
+                        new_particle = copy.deepcopy(p)
+                        new_particle.w = 1.
                     # end if
 
-                    x, y = self.add_noise(.1, 0, 0)
-                    new_particle.move_by(x, y)
-
+                    new_particle.move_by(*self.create_gaussian_noise(self.noise, 0, 0))
                     new_particles.append(new_particle)
                 # end for
 
@@ -172,38 +168,54 @@ class ParticleFilterSimulator(FilterSimulator):
                 self.particles = new_particles
             # end if
 
-            # 4.5.3 Move Robbie in world (randomly)
-            #    old_heading = robbie.h
-            #    robbie.move(world)
+            # Move all particles according to belief of movement
             for p in self.particles:
-                x, y = self.add_noise(10, 0, 0)
-                p.move_by(x, y)
-            # end for
+                p_x = p.x
+                p_y = p.y
 
-            # 4.5.4 Move all particles according to belief of movement
-            d_x: float = .0
-            d_y: float = .0
-            for p in self.particles:
+                idx: Optional[int] = None
+                p_d_min: float = .0
 
-                # Add all vectors
-                for det in self.cur_frame:
-                    d_x += (det.x - p.x)
-                    d_y += (det.y - p.y)
+                # Determine detection nearest to the current particle
+                for _idx, det in enumerate(self.cur_frame):
+                    d_x: float = (det.x - p.x)
+                    d_y: float = (det.y - p.y)
+                    p_d: float = math.sqrt(d_x * d_x + d_y * d_y)
+
+                    if idx is None or p_d < p_d_min:
+                        idx = _idx
+                        p_d_min = p_d
+                    # end if
                 # end for
 
-                # Calculate resulting vector
-                n_vec: int = len(self.cur_frame)
-                if n_vec > 0:
-                    d_x = d_x / n_vec
-                    d_y = d_y / n_vec
-                # end if
+                # Calc distance and andle to nearest detection
+                det = self.cur_frame[idx]
+                d_x: float = (det.x - p.x)
+                d_y: float = (det.y - p.y)
 
                 p_d: float = math.sqrt(d_x * d_x + d_y * d_y)
                 angle: float = math.atan2(d_y, d_x)
-                # p_d = 1.0  # XXX
-                # p.x += self.speed * p_d * math.cos(angle)
-                # p.y += self.speed * p_d * math.sin(angle)
-                p.move_by(min(self.speed, p_d) * math.cos(angle), min(self.speed, p_d) * math.sin(angle))
+
+                # Use a convex combination of...
+                # .. the particles speed
+                d_x = self.speed * p_d * math.cos(angle)
+                d_y = self.speed * p_d * math.sin(angle)
+
+                # .. and the 'speed', the particle progresses towards the new detection
+                if self.use_speed:
+                    d_x += (1 - self.speed) * p.vx
+                    d_y += (1 - self.speed) * p.vy
+                # end if
+
+                # Move particle towards nearest detection
+                p.move_by(d_x, d_y)
+
+                # Calc particle speed for next time step
+                p.vx = p.x - p_x
+                p.vy = p.y - p_y
+
+                # Add some noise for more stability
+                p.move_by(*self.create_gaussian_noise(self.noise, 0, 0))
             # end for
         # end while
     # end def
@@ -248,18 +260,14 @@ class ParticleFilterSimulator(FilterSimulator):
                          linestyle="--")
         # end for
 
-        # Weighted mean
-        if self.mean is not None:
-            self.ax.scatter([self.mean.x], [self.mean.y], s=200,
-                            c="gray" if self.m_confident else "pink", edgecolor="black", marker="o")
+        # Mean shift centers
+        if self.step >= 0:
+            self.ax.scatter([cc[0] for cc in self.cluster_centers],
+                            [cc[1] for cc in self.cluster_centers],
+                            s=200, c="gray" if self.m_confident else "pink", edgecolor="black", marker="o")
 
         # Particles
         self.ax.scatter([p.x for p in self.particles], [p.y for p in self.particles], s=5, edgecolor="blue", marker="o")
-
-        # Mean shift centers
-        if hasattr(self, 'cluster_centers_'):
-            self.ax.scatter([cc[0] for cc in self.cluster_centers],
-                            [cc[1] for cc in self.cluster_centers], s=25, edgecolor="orange", marker="x")
 
         if self.cur_frame is not None:
             # Current detections
@@ -293,53 +301,19 @@ class ParticleFilterSimulator(FilterSimulator):
     # end def
 
     @staticmethod
-    def add_noise(level: float, *coords) -> List[float]:
+    def create_noise(level: float, *coords) -> List[float]:
         return [x + random.uniform(-level, level) for x in coords]
 
-    # This is just a gaussian kernel I pulled out of my hat, to transform
-    # values near to robbie's measurement => 1, further away => 0
+    @staticmethod
+    def create_gaussian_noise(level: float, *coords) -> List[float]:
+        return [x + np.random.normal(.0, level) for x in coords]
+
+    # Gaussian kernel to transform values near the particle => 1, further away => 0
     @staticmethod
     def w_gauss(x: float, sigma: float) -> float:
         g = math.e ** -(x * x / (2 * sigma * sigma))
 
         return g
-
-    def compute_mean_point(self) -> Tuple[Position, int]:
-        """
-        Compute the mean for all particles that have a reasonably good weight.
-        This is not part of the particle filter algorithm but rather an
-        addition to show the "best belief" for current position.
-        """
-
-        m_x: float = 0
-        m_y: float = 0
-        m_count: int = 0
-
-        for p in self.particles:
-            m_count += p.w
-            m_x += p.x * p.w
-            m_y += p.y * p.w
-
-        if m_count == 0:
-            return Position(-1, -1), False
-
-        m_x /= m_count
-        m_y /= m_count
-
-        # Now compute how good that mean is - check how many particles actually are in the immediate vicinity
-        m_count = 0
-
-        for p in self.particles:
-            d_x = p.x - m_x
-            d_y = p.y - m_y
-            p_d = math.sqrt(d_x * d_x + d_y * d_y)
-
-            if p_d < 3:  # xxx param
-                m_count += 1
-
-        return Position(m_x, m_y), m_count > len(self.particles) * 0.95  # xxx param
-    # end def
-# end class
 
 
 def main(argv: List[str]):
@@ -353,32 +327,36 @@ def main(argv: List[str]):
     def usage() -> str:
         return "{} <PARAMETERS>\n".format(os.path.basename(argv[0])) + \
                "\n" + \
-               "-g <GAUSS_SIGMA>:\n" + \
-               "    Sigma of Gaussian importance weight kernel.\n" + \
+               "-g, --sigma_gauss_kernel=GAUSS_SIGMA:\n" + \
+               "    Set sigma of Gaussian importance weight kernel to GAUSS_SIGMA.\n" + \
                "\n" + \
-               "-h: This help.\n" + \
+               "-h, --help: Prints this help.\n" + \
                "\n" + \
-               "-i <INPUT_FILE>:\n" + \
-               "    Input file to parse with coordinates in WGS 84 system.\n" + \
+               "-i, --input=INPUT_FILE:\n" + \
+               "    Parse detections with coordinates in WGS84 from INPUT_FILE.\n" + \
                "\n" + \
-               "-l <LIMITS>:\n" + \
-               "    Fixed limits for the canvas in format 'X_MIN;Y_MIN;X_MAX;Y_MAX'.\n" + \
+               "-l, --limits=LIMITS:\n" + \
+               "    Sets the limits for the canvas to LIMITS. Its format is 'X_MIN;Y_MIN;X_MAX;Y_MAX'.\n" + \
                "\n" + \
-               "-n <N_PARTICLES>:\n" + \
-               "    Number of particles.\n" + \
+               "-n, --number_of_particles=N_PARTICLES:\n" + \
+               "    Sets the particle filter's number of particles to N_PARTICLES.\n" + \
                "\n" + \
-               "-o <OUTPUT_FILE>:\n" \
-               "    Output file to write manually set coordinates converted to WGS84\n" + \
+               "-o, --output=OUTPUT_FILE:\n" \
+               "    Sets the output file to store the manually set coordinates converted to WGS84 to OUTPUT_FILE.\n" + \
                "\n" + \
-               "-p <OBSERVER_POSITION>:\n" \
-               "    Position of the observer in WGS84. Can be used instead of the center of the detections or in case" \
-               "of only manually creating detections, which needed to be transformed back to WGS84.\n" + \
+               "-p, --observer_position=OBSERVER_POSITION:\n" \
+               "    Sets the position of the observer in WGS84 to OBSERVER_POSITION. Can be used instead of the center" \
+               "of the detections or in case of only manually creating detections, which needed to be transformed back" \
+               "to WGS84. Its format is 'X_POS;Y_POS'.\n" + \
                "\n" + \
-               "-s <SPEED>:\n" \
-               "    Speed of the object.\n" + \
+               "-r, --particle_movement_noise=NOISE:\n" \
+               "    Sets the particle's movement noise to NOISE.\n" + \
                "\n" + \
-               "-v <VERBOSITY>:\n" \
-               "    Verbosity level. 0 = Silent [Default], >0 = decreasing verbosity.\n"
+               "-s, --speed=SPEED:\n" \
+               "    Sets the speed the particles move towards their nearest detection to SPEED.\n" + \
+               "\n" + \
+               "-v, --verbosity_level=VERBOSITY:\n" \
+               "    Sets the programs verbosity level to VERBOSITY. 0 = Silent [Default], >0 = decreasing verbosity.\n"
     # end def
 
     inputfile: str = ""
@@ -386,12 +364,16 @@ def main(argv: List[str]):
     limits: Limits = Limits(-10, -10, 10, 10)
     n_particles: int = 100
     sigma: float = 20.
+    noise: float = .1
     speed: float = 1.
     verbosity: Logging = Logging.INFO
     observer: Optional[Position] = None
 
     try:
-        opts, args = getopt.getopt(argv[1:], "g:hi:l:n:o:p:s:v:")
+        opts, args = getopt.getopt(argv[1:], "g:hi:l:n:o:p:r:s:v:",
+                                   ["sigma_gauss_kernel=", "--help", "input=", "limits=", "number_of_particles=",
+                                    "output=", "observer_position=", "particle_movement_noise=", "speed=",
+                                    "verbosity_level="])
     except getopt.GetoptError as e:
         print("Reading parameters caused error {}".format(e))
         print(usage())
@@ -399,39 +381,45 @@ def main(argv: List[str]):
     # end try
 
     for opt, arg in opts:
-        if opt == "-g":
+        if opt in ("-g", "--sigma_gauss_kernel"):
             sigma = float(arg)
 
-        elif opt == '-h':
+        elif opt in ("-h", "--help"):
             print(usage())
             sys.exit()
 
-        elif opt == "-i":
+        elif opt in ("-i", "--input"):
             inputfile = arg
 
-        elif opt == "-l":
+        elif opt in ("-l", "--limits"):
             fields: List[str] = arg.split(";")
             if len(fields) == 4:
                 limits = Limits(float(fields[0]), float(fields[1]), float(fields[2]), float(fields[3]))
 
-        elif opt == "-n":
+        elif opt in ("-n", "--number_of_particles"):
             n_particles = int(arg)
 
-        elif opt == "-o":
+        elif opt == ("-o", "--output"):
             outputfile = arg
 
-        elif opt == "-p":
+        elif opt in ("-p", "--observer_position"):
             fields: List[str] = arg.split(";")
             if len(fields) >= 2:
                 observer = Position(float(fields[0]), float(fields[1]))
 
-        elif opt == "-v":
+        elif opt in ("-r", "--particle_movement_noise"):
+            noise = float(arg)
+
+        elif opt in ("-s", "--speed"):
+            speed = max(min(float(arg), 1.), .0)
+
+        elif opt in ("-v", "--verbosity_level"):
             verbosity = Logging(int(arg))
     # end for
 
     sim: ParticleFilterSimulator = ParticleFilterSimulator(fn_in=inputfile, fn_out=outputfile, limits=limits,
-                                                           n_part=n_particles, s_gauss=sigma,
-                                                           speed=speed, verbosity=verbosity, observer=observer)
+                                                           n_part=n_particles, s_gauss=sigma, speed=speed,
+                                                           noise=noise, verbosity=verbosity, observer=observer)
     sim.run()
 
 

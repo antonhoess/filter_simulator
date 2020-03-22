@@ -13,10 +13,10 @@ class Logging(IntEnum):
     INFO = 4
     DEBUG = 5
 
-    def __init__(self, verbosity: Logging):
+    def __init__(self, verbosity: int):
         super().__init__()
 
-        self.verbosity = verbosity
+        self.verbosity: int = verbosity
 
     def print_verbose(self, verbosity: Logging, message: str):
         if self.verbosity >= verbosity:
