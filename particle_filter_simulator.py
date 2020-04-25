@@ -192,7 +192,7 @@ def main(argv: List[str]):
 
     try:
         opts, args = getopt.getopt(argv[1:], "g:hi:l:n:o:p:r:s:v:",
-                                   ["sigma_gauss_kernel=", "--help", "input=", "limits=", "number_of_particles=",
+                                   ["sigma_gauss_kernel=", "help", "input=", "limits=", "number_of_particles=",
                                     "output=", "observer_position=", "particle_movement_noise=", "speed=",
                                     "verbosity_level="])
     except getopt.GetoptError as e:

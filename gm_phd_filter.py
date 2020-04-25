@@ -32,7 +32,7 @@ import re
 import random
 from collections import Counter
 
-from filter_simulator.common import Logging, Limits, Frame
+from filter_simulator.common import Logging, Frame
 
 
 class GmComponent:
@@ -291,17 +291,19 @@ class Gmm:
         """Given a list of GmphdComponents, randomly samples n values from the density they represent"""
         samples = []
 
-        rnd_gms = random.choices(range(len(self.__gm_comp_set)), [x.weight for x in self.__gm_comp_set], k=n)
-        counter = Counter(rnd_gms)
+        if len(self.__gm_comp_set) > 0:
+            rnd_gms = random.choices(range(len(self.__gm_comp_set)), [x.weight for x in self.__gm_comp_set], k=n)
+            counter = Counter(rnd_gms)
 
-        for g in counter.keys():
-            cnt = counter.get(g)
-            comp = self.__gm_comp_set[g]
+            for g in counter.keys():
+                cnt = counter.get(g)
+                comp = self.__gm_comp_set[g]
 
-            for s in np.random.multivariate_normal(comp.loc.flat, comp.cov, cnt):
-                samples.append(s)
+                for s in np.random.multivariate_normal(comp.loc.flat, comp.cov, cnt):
+                    samples.append(s)
+                # end for
             # end for
-        # end for
+        # end if
 
         return samples
     # end def
@@ -393,7 +395,6 @@ g.gmm
         self.__r = np.array(r, dtype=np.float64)  # Observation noise covariance (R_k in paper)
         self.__clutter = np.float64(clutter)      # Clutter intensity (KAU in paper)
 
-        #self.__det_borders: Limits = limits
         self.__logging = logging
         self.__cur_frame: Optional[Frame] = None
     # end def
@@ -515,7 +516,7 @@ g.gmm
 
         weight_sums.append(new_gmm.get_total_weight())
         weight_sums.append(self._gmm.get_total_weight())
-        if self.__logging >= Logging.INFO:
+        if self.__logging >= Logging.DEBUG:
             self.__logging.print("prune(): %i -> %i -> %i -> %i" % (orig_len, trunc_len, len(new_gmm), len(self._gmm)))
             self.__logging.print("prune(): weight_sums %g -> %g -> %g -> %g" % (weight_sums[0], weight_sums[1], weight_sums[2], weight_sums[3]))
         # end if
@@ -531,9 +532,8 @@ g.gmm
             items = self.__extract_states_using_integral(bias)
         # end if
 
-        # XXX
-        # for x in items:
-        #     self.__logging.print_verbose(Logging.DEBUG, x.T)
+        for x in items:
+            self.__logging.print_verbose(Logging.DEBUG, x.T)
         # end for
 
         return items
@@ -546,8 +546,8 @@ g.gmm
           I added the 'bias' factor, by analogy with the other method below."""
         items = []
 
-        self.__logging.print_verbose(Logging.INFO, "weights:")
-        self.__logging.print_verbose(Logging.INFO, str([round(comp.weight, 7) for comp in self._gmm]))
+        self.__logging.print_verbose(Logging.DEBUG, "weights:")
+        self.__logging.print_verbose(Logging.DEBUG, str([round(comp.weight, 7) for comp in self._gmm]))
 
         for comp in self._gmm:
             val = comp.weight * bias
@@ -566,7 +566,7 @@ g.gmm
         "bias" is a multiplier for the est number of items.
         """
         num_to_add = int(round(bias * self._gmm.get_total_weight()))
-        self.__logging.print_verbose(Logging.INFO, "bias is %g, num_to_add is %i" % (bias, num_to_add))
+        self.__logging.print_verbose(Logging.DEBUG, "bias is %g, num_to_add is %i" % (bias, num_to_add))
 
         # A temporary list of peaks which will gradually be decimated as we steal from its highest peaks
         peaks = [GmComponent(comp.weight, comp.loc, None) for comp in self._gmm]
