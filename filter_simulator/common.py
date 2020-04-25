@@ -18,6 +18,10 @@ class Logging(IntEnum):
 
         self.verbosity: int = verbosity
 
+    @staticmethod
+    def print(message: str):
+        print(message)
+
     def print_verbose(self, verbosity: Logging, message: str):
         if self.verbosity >= verbosity:
             print(message)

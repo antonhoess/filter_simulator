@@ -66,7 +66,7 @@ class ParticleFilter:
         self.__use_speed: bool = True  # XXX Param? # If we use speed to update the particle's position, the particle
         # might fly out of the curve, since their value of the gaussian kernel for calculating the importance
         # weight will be less
-        self.___speed: float = speed
+        self.__speed: float = speed
         self.__resampling: bool = True
         self.__det_borders: Limits = limits
         self.__logging: Logging = logging
@@ -139,13 +139,13 @@ class ParticleFilter:
 
             # Use a convex combination of...
             # .. the particles speed
-            d_x = self.___speed * p_d * math.cos(angle)
-            d_y = self.___speed * p_d * math.sin(angle)
+            d_x = self.__speed * p_d * math.cos(angle)
+            d_y = self.__speed * p_d * math.sin(angle)
 
             # .. and the 'speed', the particle progresses towards the new detection
             if self.__use_speed:
-                d_x += (1 - self.___speed) * p.vx
-                d_y += (1 - self.___speed) * p.vy
+                d_x += (1 - self.__speed) * p.vx
+                d_y += (1 - self.__speed) * p.vy
             # end if
 
             # Move particle towards nearest detection

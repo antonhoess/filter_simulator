@@ -17,8 +17,7 @@ from .io_helper import FileReader, FileWriter, InputLineHandlerLatLonIdx
 
 
 class FilterSimulator(ABC):
-    def __init__(self, fn_in: str, fn_out: str, logging: Logging, observer: Optional[Position],
-                 limits: Limits) -> None:
+    def __init__(self, fn_in: str, fn_out: str, limits: Limits, observer: Optional[Position], logging: Logging) -> None:
         self.__fn_in: str = fn_in
         self.__fn_out: str = fn_out
         self.__step: int = -1
@@ -318,10 +317,11 @@ class FilterSimulator(ABC):
 
     def __update_window_wrap(self, _frame: Optional[int] = None) -> None:
         # This should block all subsequent calls to update_windows, but should be no problem
-        self.__refresh.wait(50. / 1000)
+        timed_out = not self.__refresh.wait(50. / 1000)
+
         self.__refresh.clear()
 
-        if self._ax is None:
+        if self._ax is None or timed_out:
             return
 
         # Store current limits for resetting it the next time

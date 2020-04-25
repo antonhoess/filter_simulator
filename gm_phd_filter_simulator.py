@@ -8,35 +8,29 @@ import getopt
 import random
 import numpy as np
 from datetime import datetime
-from sklearn.cluster import MeanShift
 from matplotlib.patches import Ellipse
 import seaborn as sns
 
 from filter_simulator.common import Logging, Limits, Position
 from filter_simulator.filter_simulator import FilterSimulator
-from particle_filter import ParticleFilter
+from gm_phd_filter import GmPhdFilter, GmComponent
 
 
-class ParticleFilterSimulator(FilterSimulator, ParticleFilter):
-    def __init__(self, fn_in: str, fn_out: str, limits: Limits, observer: Position, logging: Logging, n_part: int, s_gauss: float, noise: float, speed: float):
+class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
+    def __init__(self, fn_in: str, fn_out: str, limits: Limits, observer: Position, logging: Logging,
+                 birth_gmm: List[GmComponent], p_survival: float, p_detection: float,
+                 f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, clutter: float,
+                 trunc_thresh: float, merge_thresh: float, max_components: int):
         FilterSimulator.__init__(self, fn_in, fn_out, limits, observer, logging)
-        ParticleFilter.__init__(self, n_part, s_gauss, noise, speed, limits, logging)
-
-        self.__m_confident: bool = False
-        self.__cluster_centers: Optional[np.ndarray] = None
-        self.__ms_bandwidth: float = .1  # XXX Param?
+        GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, clutter=clutter, logging=logging)
+        self.__trunc_thresh = trunc_thresh
+        self.__merge_thresh = merge_thresh
+        self.__max_components = max_components
         self.__logging: Logging = logging
 
     def _sim_loop_before_step_and_drawing(self):
-        # Calculate mean shift
-        clustering: bool = True
-        if clustering:
-            cluster_samples: np.array = np.array([[p.x, p.y] for p in self._particles])
-            clust: MeanShift = MeanShift(bandwidth=self.__ms_bandwidth).fit(cluster_samples)
-            self.__cluster_centers: np.ndarray = clust.cluster_centers_
-            self.__logging.print_verbose(Logging.DEBUG, clust.labels_)
-            self.__logging.print_verbose(Logging.DEBUG, clust.cluster_centers_)
-        # end if
+        pass
+        # XXX vllt. wie im partikelfilter manches vorher ausrechnen, da es sonst bereits für den nächsten Schritt upgedatet wird
     # end def
 
     def _sim_loop_after_step_and_drawing(self):
@@ -44,26 +38,21 @@ class ParticleFilterSimulator(FilterSimulator, ParticleFilter):
         self._cur_frame = self._frames[self._step]
 
         # Update
-        self._update()
+        self._update([np.array([det.x, det.y]) for det in self._cur_frame])
 
-        # Resample
-        self._resample()
+        # Prune
+        self._prune(trunc_thresh=self.__trunc_thresh, merge_thresh=self.__merge_thresh, max_components=self.__max_components)
 
-        # Predict
-        self._predict()
+        # Predict als eigenen Step herausarbeiten, sofern was überhaupt geht - ist dies überhaupt sinnvoll?
     # end def
 
     def _calc_density(self, x: np.ndarray, y: np.ndarray) -> float:
-        accum: float = 0.
+        # XXX ähnlich zu eval_grid_2d bzw. daraus entnommen
+        points = np.stack((x, y), axis=-1).reshape(-1, 2)
 
-        for p in self._particles:
-            d_x: float = p.x - x
-            d_y: float = p.y - y
-            p_d: float = 1. / np.sqrt(d_x * d_x + d_y * d_y)
-            accum += p_d
-        # end for
+        vals = self._gmm.eval_list(points)  # XXX , which_dims)
 
-        return accum
+        return np.array(vals).reshape(x.shape)
 
     def _calc_density_map(self, grid_res: int = 100) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         x_: np.ndarray = np.linspace(self._det_borders.x_min, self._det_borders.x_max, grid_res)
@@ -74,17 +63,43 @@ class ParticleFilterSimulator(FilterSimulator, ParticleFilter):
 
         return x, y, z
 
+    @staticmethod
+    def get_cov_ellipse(comp: GmComponent, n_std: float, **kwargs):
+        return GmPhdFilterSimulator.get_cov_ellipse2(comp.cov, comp.loc, n_std, **kwargs)
+    # end def
+
+    @staticmethod
+    def get_cov_ellipse2(cov, centre, nstd, **kwargs):
+        """ Return a matplotlib Ellipse patch representing the covariance matrix
+        cov centred at centre and scaled by the factor nstd. """
+        # Find and sort eigenvalues and eigenvectors into descending order
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        order = eigvals.argsort()[::-1]
+        eigvals, eigvecs = eigvals[order], eigvecs[:, order]
+
+        # The anti-clockwise angle to rotate our ellipse by
+        vx, vy = eigvecs[:, 0][0], eigvecs[:, 0][1]
+        theta = np.arctan2(vy, vx)
+
+        # Width and height of ellipse to draw
+        width, height = 2 * nstd * np.sqrt(eigvals)
+        return Ellipse(xy=centre, width=width, height=height, angle=float(np.degrees(theta)), **kwargs)
+
+    # end def
+
     def _update_window(self) -> None:
-        print(".", end="")  # XXX
         # Draw density map
-        draw_kde: bool = True  # XXX parameter
+        draw_kde: bool = True
         if not draw_kde:
             x, y, z = self._calc_density_map(grid_res=100)
             self._ax.contourf(x, y, z, 20, cmap='Blues')
         else:
-            x = [p.x for p in self._particles]
-            y = [p.y for p in self._particles]
-            sns.kdeplot(x, y, shade=True, ax=self._ax)
+            if len(self._gmm) > 0:
+                samples = self._gmm.samples(1000)
+                x = [s[0] for s in samples]
+                y = [s[1] for s in samples]
+                sns.kdeplot(x, y, shade=True, ax=self._ax)
+            # end if
         # end if
 
         # All detections - each frame's detections in a different color
@@ -94,15 +109,13 @@ class ParticleFilterSimulator(FilterSimulator, ParticleFilter):
                           linestyle="--")
         # end for
 
-        # Mean shift centers
-        if self._step >= 0:
-            self._ax.scatter([cc[0] for cc in self.__cluster_centers],
-                             [cc[1] for cc in self.__cluster_centers],
-                             s=200, c="gray" if self.__m_confident else "pink", edgecolor="black", marker="o")
+        # Estimated states
+        est_items = self._extract_states(bias=1.)  # XXX params bias + use_integral
+        self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=200, c="gray", edgecolor="black", marker="o")
 
-        # Particles
-        self._ax.scatter([p.x for p in self._particles], [p.y for p in self._particles], s=5, edgecolor="blue",
-                         marker="o")
+        # # Particles
+        # self._ax.scatter([p.x for p in self._particles], [p.y for p in self._particles], s=5, edgecolor="blue",
+        #                  marker="o")
 
         if self._cur_frame is not None:
             # Current detections
@@ -110,14 +123,10 @@ class ParticleFilterSimulator(FilterSimulator, ParticleFilter):
             det_pos_y: List[float] = [det.y for det in self._cur_frame]
             self._ax.scatter(det_pos_x, det_pos_y, s=100, c="red", marker="x")
 
-            # Importance weight Gaussian-kernel covariance ellipse
-            ell_radius_x: float = self._s_gauss
-            ell_radius_y: float = self._s_gauss
-
-            for det in self._cur_frame:
-                ellipse: Ellipse = Ellipse((det.x, det.y), width=ell_radius_x * 2,
-                                           height=ell_radius_y * 2, facecolor='none', edgecolor="black", linewidth=.5)
-                self._ax.add_patch(ellipse)
+            # GM-PHD components covariance ellipses
+            for comp in self._gmm:
+                ell = self.get_cov_ellipse(comp, 1., facecolor='none', edgecolor="black", linewidth=.5)
+                self._ax.add_patch(ell)
             # end for
         # end if
     # end def
@@ -143,6 +152,7 @@ def main(argv: List[str]):
     # Initialize random generator
     random.seed(datetime.now())
 
+    # XXX Adapt parameters - first adopt the other code to find out, which parameters there are
     # Read command line arguments
     def usage() -> str:
         return "{} <PARAMETERS>\n".format(os.path.basename(argv[0])) + \
@@ -238,8 +248,15 @@ def main(argv: List[str]):
             verbosity = Logging(int(arg))
     # end for
 
-    sim: ParticleFilterSimulator = ParticleFilterSimulator(fn_in=inputfile, fn_out=outputfile, limits=limits, observer=observer, logging=verbosity,
-                                                           n_part=n_particles, s_gauss=sigma, speed=speed, noise=noise)
+    # XXX
+    birth_comps = list()
+    birth_comps.append(GmComponent(0.1, [0, 0], np.eye(2) * 2. ** 2))
+
+    sim: GmPhdFilterSimulator = GmPhdFilterSimulator(fn_in=inputfile, fn_out=outputfile, limits=limits, observer=observer, logging=verbosity,
+                                                     birth_gmm=birth_comps, p_survival=0.9, p_detection=0.9,
+                                                     f=np.eye(2), q=np.eye(2) * 0., h=np.eye(2), r=np.eye(2) * .1, clutter=0.000002,
+                                                     trunc_thresh=1e-6, merge_thresh=0.01, max_components=10)
+
     sim.run()
 
 
