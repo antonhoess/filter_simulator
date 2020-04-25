@@ -92,8 +92,11 @@ class FilterSimulator(ABC):
         # end while
 
     def run(self):
+	# NB: Mark all threads as daemons so that the process terminates when the GUI thread termines.
+
         # Processing thread
         t_proc: threading.Thread = threading.Thread(target=self.__processing)
+        t_proc.daemon = True
         t_proc.start()
 
         # Keyboard thread

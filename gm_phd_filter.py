@@ -407,7 +407,7 @@ g.gmm
     def _cur_frame(self, value: Optional[Frame]) -> None:
         self.__cur_frame = value
 
-    def _update(self, observations):
+    def _predict_and_update(self, observations):
         """Run a single GM-PHD step given a new frame of observations.
           'obs' is an array (a set) of this frame's observations.
           Based on Table 1 from Vo and Ma paper."""

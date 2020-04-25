@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from __future__ import annotations
-from typing import List, Tuple, Optional
+from typing import Sequence, List, Tuple, Optional
 import os
 import sys
 import getopt
@@ -30,7 +30,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                  f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, clutter: float,
                  trunc_thresh: float, merge_thresh: float, max_components: int,
                  ext_states_bias: float, ext_states_use_integral: bool,
-                 density_draw_style: DensityDrawStyle, n_samples_heatmap: int, n_bins_heatmap: int):
+                 density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int):
         FilterSimulator.__init__(self, fn_in, fn_out, limits, observer, logging)
         GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, clutter=clutter, logging=logging)
         self.__trunc_thresh = trunc_thresh
@@ -39,33 +39,35 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         self.__ext_states_bias = ext_states_bias
         self.__ext_states_use_integral = ext_states_use_integral
         self.__density_draw_style = density_draw_style
-        self.__n_samples_heatmap = n_samples_heatmap
-        self.__n_bins_heatmap = n_bins_heatmap
+        self.__n_samples_density_map = n_samples_density_map
+        self.__n_bins_density_map = n_bins_density_map
         self.__logging: Logging = logging
 
     def _sim_loop_before_step_and_drawing(self):
-        pass
-        # XXX vllt. wie im partikelfilter manches vorher ausrechnen, da es sonst bereits für den nächsten Schritt upgedatet wird
+        if self._step < 0:
+            self._predict_and_update([])
+
+        else:
+            # Set current frame
+            self._cur_frame = self._frames[self._step]
+
+            # Predict and update
+            self._predict_and_update([np.array([det.x, det.y]) for det in self._cur_frame])
+
+            # Prune
+            self._prune(trunc_thresh=self.__trunc_thresh, merge_thresh=self.__merge_thresh, max_components=self.__max_components)
+        # end if
     # end def
 
     def _sim_loop_after_step_and_drawing(self):
-        # Set current frame
-        self._cur_frame = self._frames[self._step]
-
-        # Update
-        self._update([np.array([det.x, det.y]) for det in self._cur_frame])
-
-        # Prune
-        self._prune(trunc_thresh=self.__trunc_thresh, merge_thresh=self.__merge_thresh, max_components=self.__max_components)
-
-        # XXX Predict als eigenen Step herausarbeiten, sofern was überhaupt geht - ist dies überhaupt sinnvoll?
+        pass
     # end def
 
     def _calc_density(self, x: np.ndarray, y: np.ndarray) -> float:
-        # XXX ähnlich zu eval_grid_2d bzw. daraus entnommen
+        # Code taken from eval_grid_2d()
         points = np.stack((x, y), axis=-1).reshape(-1, 2)
 
-        vals = self._gmm.eval_list(points)  # XXX , which_dims)
+        vals = self._gmm.eval_list(points, which_dims=(0, 1))
 
         return np.array(vals).reshape(x.shape)
 
@@ -79,57 +81,59 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         return x, y, z
 
     @staticmethod
-    def get_cov_ellipse(comp: GmComponent, n_std: float, **kwargs):
-        return GmPhdFilterSimulator.get_cov_ellipse2(comp.cov, comp.loc, n_std, **kwargs)
+    def __get_cov_ellipse_from_comp(comp: GmComponent, n_std: float, which_dims: Sequence[int] = (0, 1), **kwargs):
+        which_dims = list(which_dims)
+        comp = comp.get_with_reduced_dims(which_dims)
+        return GmPhdFilterSimulator.__get_cov_ellipse(comp.cov, comp.loc, n_std, **kwargs)
     # end def
 
     @staticmethod
-    def get_cov_ellipse2(cov, centre, nstd, **kwargs):
+    def __get_cov_ellipse(cov, centre, n_std, **kwargs):
         """ Return a matplotlib Ellipse patch representing the covariance matrix
-        cov centred at centre and scaled by the factor nstd. """
+        cov centred at centre and scaled by the factor n_std. """
         # Find and sort eigenvalues and eigenvectors into descending order
-        eigvals, eigvecs = np.linalg.eigh(cov)
-        order = eigvals.argsort()[::-1]
-        eigvals, eigvecs = eigvals[order], eigvecs[:, order]
+        eig_vals, eig_vecs = np.linalg.eigh(cov)
+        order = eig_vals.argsort()[::-1]
+        eig_vals, eig_vecs = eig_vals[order], eig_vecs[:, order]
 
         # The anti-clockwise angle to rotate our ellipse by
-        vx, vy = eigvecs[:, 0][0], eigvecs[:, 0][1]
+        vx, vy = eig_vecs[:, 0][0], eig_vecs[:, 0][1]
         theta = np.arctan2(vy, vx)
 
         # Width and height of ellipse to draw
-        width, height = 2 * nstd * np.sqrt(eigvals)
+        width, height = 2 * n_std * np.sqrt(eig_vals)
         return Ellipse(xy=centre, width=width, height=height, angle=float(np.degrees(theta)), **kwargs)
 
     # end def
 
     def _update_window(self) -> None:
+        # cmap = "Greys"
+        # cmap = "plasma"
+        cmap = "Blues"
         # Draw density map
         if self.__density_draw_style == DensityDrawStyle.DRAW_KDE:
             if len(self._gmm) > 0:
-                samples = self._gmm.samples(1000)
+                samples = self._gmm.samples(self.__n_samples_density_map)
                 x = [s[0] for s in samples]
                 y = [s[1] for s in samples]
-                sns.kdeplot(x, y, shade=True, ax=self._ax)
+                sns.kdeplot(x, y, shade=True, ax=self._ax, shade_lowest=False, cmap=cmap)
             # end if
 
         elif self.__density_draw_style == DensityDrawStyle.DRAW_EVAL:
-            x, y, z = self._calc_density_map(grid_res=100)
-            self._ax.contourf(x, y, z, 20, cmap='Blues')
+            x, y, z = self._calc_density_map(grid_res=self.__n_bins_density_map)
+            self._ax.contourf(x, y, z, 20, cmap=cmap)
 
         else:  # DensityDrawStyle.DRAW_HEATMAP
-            n_samples_heatmap = self.__n_samples_heatmap
-            n_bins_heatmap = self.__n_bins_heatmap
-            samples = self._gmm.samples(n_samples_heatmap)
+            samples = self._gmm.samples(self.__n_samples_density_map)
             det_borders = self._det_borders
-            self._ax.hist2d([s[0] for s in samples], [s[1] for s in samples], bins=n_bins_heatmap,
-                            range=[[det_borders.x_min, det_borders.x_max], [det_borders.y_min, det_borders.y_max]], density=False, cmap='plasma')
+            self._ax.hist2d([s[0] for s in samples], [s[1] for s in samples], bins=self.__n_bins_density_map,
+                            range=[[det_borders.x_min, det_borders.x_max], [det_borders.y_min, det_borders.y_max]], density=False, cmap=cmap)
         # end if
 
         # All detections - each frame's detections in a different color
         for frame in self._frames:
             self._ax.scatter([det.x for det in frame], [det.y for det in frame], edgecolor="green", marker="o")
-            self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5,
-                          linestyle="--")
+            self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5, linestyle="--")
         # end for
 
         # Estimated states
@@ -144,7 +148,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
             # GM-PHD components covariance ellipses
             for comp in self._gmm:
-                ell = self.get_cov_ellipse(comp, 1., facecolor='none', edgecolor="black", linewidth=.5)
+                ell = self.__get_cov_ellipse_from_comp(comp, 1., facecolor='none', edgecolor="black", linewidth=.5)
                 self._ax.add_patch(ell)
             # end for
 
@@ -253,6 +257,14 @@ def main(argv: List[str]):
                "DensityDrawStyle.DRAW_EVAL (evaluate the correct value for each cell in a grid) and DensityDrawStyle.DRAW_HEATMAP (heatmap made of sampled points from the PHD).\n" + \
                "    Example: DensityDrawStyle.DRAW_HEATMAP" + \
                "\n" + \
+               "    --n_samples_density_map=N_SAMPLES_DENSITY_MAP:\n" + \
+               "    Sets the number samples to draw from the PHD for drawing the density map.\n" + \
+               "    Example: 10000\n" + \
+               "\n" + \
+               "    --n_bins_density_map=N_BINS_DENSITY_MAP:\n" + \
+               "    Sets the number bins for drawing the PHD density map.\n" + \
+               "    Example: 100\n" + \
+               "\n" + \
                "\n" + \
                "GUI\n" + \
                "    Mouse and keyboard events on the plotting window (GUI).\n" \
@@ -297,14 +309,14 @@ def main(argv: List[str]):
     ext_states_bias: float = 1.
     ext_states_use_integral: bool = False
     density_draw_style: DensityDrawStyle = DensityDrawStyle.DRAW_HEATMAP
-    n_samples_heatmap: int = 10000
-    n_bins_heatmap: int = 100
+    n_samples_density_map: int = 10000
+    n_bins_density_map: int = 100
 
     try:
         opts, args = getopt.getopt(argv[1:], "hi:l:o:p:v:", ["help", "input=", "limits=", "output=", "observer_position=", "verbosity_level=",
                                                              "birth_gmm=", "p_survival=", "p_detection=", "mat_f=", "mat_q=", "mat_h=", "mat_r=", "clutter=",
                                                              "trunc_thresh=", "merge_thresh=", "max_components=",
-                                                             "ext_states_bias=", "ext_states_use_integral", "density_draw_style=", "n_samples_heatmap=", "n_bins_heatmap="])
+                                                             "ext_states_bias=", "ext_states_use_integral", "density_draw_style=", "n_samples_density_map=", "n_bins_density_map="])
 
     except getopt.GetoptError as e:
         print("Reading parameters caused error {}".format(e))
@@ -313,7 +325,8 @@ def main(argv: List[str]):
     # end try
 
     for opt, arg in opts:
-        err = False
+        err: bool = False
+        err_msg: Optional[str] = None
 
         if opt in ("-h", "--help"):
             print(usage())
@@ -339,7 +352,11 @@ def main(argv: List[str]):
             verbosity = Logging(int(arg))
 
         elif opt == "--birth_gmm":
-            birth_gmm = eval(arg)
+            try:
+                birth_gmm = eval(arg)
+            except Exception as e:
+                err_msg = str(e)
+            # end try
 
             if isinstance(birth_gmm, list):
                 for comp in birth_gmm:
@@ -359,28 +376,44 @@ def main(argv: List[str]):
             p_detection = float(arg)
 
         elif opt == "--mat_f":
-            f = eval(arg)
+            try:
+                f = eval(arg)
+            except Exception as e:
+                err_msg = str(e)
+            # end try
 
             if not isinstance(f, np.ndarray):
                 err = True
             # end if
 
         elif opt == "--mat_q":
-            q = eval(arg)
+            try:
+                q = eval(arg)
+            except Exception as e:
+                err_msg = str(e)
+            # end try
 
             if not isinstance(q, np.ndarray):
                 err = True
             # end if
 
         elif opt == "--mat_h":
-            h = eval(arg)
+            try:
+                h = eval(arg)
+            except Exception as e:
+                err_msg = str(e)
+            # end try
 
             if not isinstance(h, np.ndarray):
                 err = True
             # end if
 
         elif opt == "--mat_r":
-            r = eval(arg)
+            try:
+                r = eval(arg)
+            except Exception as e:
+                err_msg = str(e)
+            # end try
 
             if not isinstance(r, np.ndarray):
                 err = True
@@ -405,21 +438,29 @@ def main(argv: List[str]):
             ext_states_use_integral = True
 
         elif opt == "--density_draw_style":
-            density_draw_style = eval(arg)
+            try:
+                density_draw_style = eval(arg)
+            except Exception as e:
+                err_msg = str(e)
+            # end try
 
             if not isinstance(density_draw_style, DensityDrawStyle):
                 err = True
             # end if
 
-        elif opt == "--n_samples_heatmap":
-            n_samples_heatmap = int(arg)
+        elif opt == "--n_samples_density_map":
+            n_samples_density_map = int(arg)
 
-        elif opt == "--n_bins_heatmap":
-            n_bins_heatmap = int(arg)
+        elif opt == "--n_bins_density_map":
+            n_bins_density_map = int(arg)
         # end if
 
-        if err:
+        if err or err_msg:
             print(f"Reading parameter \'{opt}\' caused an error. Argument not provided in correct format.")
+
+            if err_msg is not None:
+                print(f"Evaluation error: {err_msg}.")
+            # end if
             sys.exit(2)
         # end if
     # end for
@@ -429,7 +470,7 @@ def main(argv: List[str]):
                                                      f=f, q=q, h=h, r=r, clutter=clutter,
                                                      trunc_thresh=trunc_thresh, merge_thresh=merge_thresh, max_components=max_components,
                                                      ext_states_bias=ext_states_bias, ext_states_use_integral=ext_states_use_integral,
-                                                     density_draw_style=density_draw_style, n_samples_heatmap=n_samples_heatmap, n_bins_heatmap=n_bins_heatmap)
+                                                     density_draw_style=density_draw_style, n_samples_density_map=n_samples_density_map, n_bins_density_map=n_bins_density_map)
     sim.run()
 
 
