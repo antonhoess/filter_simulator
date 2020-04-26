@@ -17,10 +17,20 @@ from filter_simulator.filter_simulator import FilterSimulator
 from gm_phd_filter import GmPhdFilter, GmComponent, Gmm
 
 
+class DrawLayer(Enum):
+    DENSITY_MAP = 0
+    ALL_DET = 1
+    GMM_COV_ELL = 2
+    GMM_COV_MEAN = 3
+    EST_STATE = 4
+    CUR_DET = 5
+# end class
+
+
 class DensityDrawStyle(Enum):
-    DRAW_KDE = 0
-    DRAW_EVAL = 1
-    DRAW_HEATMAP = 2
+    KDE = 0
+    EVAL = 1
+    HEATMAP = 2
 # end class
 
 
@@ -30,7 +40,8 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                  f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, clutter: float,
                  trunc_thresh: float, merge_thresh: float, max_components: int,
                  ext_states_bias: float, ext_states_use_integral: bool,
-                 density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int):
+                 density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int,
+                 draw_layers: Optional[List[DrawLayer]]):
         FilterSimulator.__init__(self, fn_in, fn_out, limits, observer, logging)
         GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, clutter=clutter, logging=logging)
         self.__trunc_thresh = trunc_thresh
@@ -42,6 +53,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         self.__n_samples_density_map = n_samples_density_map
         self.__n_bins_density_map = n_bins_density_map
         self.__logging: Logging = logging
+        self.__draw_layers: Optional[List[DrawLayer]] = draw_layers if draw_layers is not None else [ly for ly in DrawLayer]
 
     def _sim_loop_before_step_and_drawing(self):
         if self._step < 0:
@@ -107,54 +119,70 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
     # end def
 
     def _update_window(self) -> None:
-        # cmap = "Greys"
-        # cmap = "plasma"
-        cmap = "Blues"
-        # Draw density map
-        if self.__density_draw_style == DensityDrawStyle.DRAW_KDE:
-            if len(self._gmm) > 0:
-                samples = self._gmm.samples(self.__n_samples_density_map)
-                x = [s[0] for s in samples]
-                y = [s[1] for s in samples]
-                sns.kdeplot(x, y, shade=True, ax=self._ax, shade_lowest=False, cmap=cmap)
+
+        for l, ly in enumerate(self.__draw_layers):
+            zorder = l  # XXX if x.use_zorder else 0
+
+            if ly == DrawLayer.DENSITY_MAP:
+                # cmap = "Greys"
+                # cmap = "plasma"
+                cmap = "Blues"
+                # Draw density map
+                if self.__density_draw_style == DensityDrawStyle.KDE:
+                    if len(self._gmm) > 0:
+                        samples = self._gmm.samples(self.__n_samples_density_map)
+                        x = [s[0] for s in samples]
+                        y = [s[1] for s in samples]
+                        sns.kdeplot(x, y, shade=True, ax=self._ax, shade_lowest=False, cmap=cmap, zorder=zorder)
+                    # end if
+
+                elif self.__density_draw_style == DensityDrawStyle.EVAL:
+                    x, y, z = self._calc_density_map(grid_res=self.__n_bins_density_map)
+                    self._ax.contourf(x, y, z, 20, cmap=cmap)
+
+                else:  # DensityDrawStyle.DRAW_HEATMAP
+                    samples = self._gmm.samples(self.__n_samples_density_map)
+                    det_borders = self._det_borders
+                    self._ax.hist2d([s[0] for s in samples], [s[1] for s in samples], bins=self.__n_bins_density_map,
+                                    range=[[det_borders.x_min, det_borders.x_max], [det_borders.y_min, det_borders.y_max]], density=False, cmap=cmap, zorder=zorder)
+                # end if
+
+            elif ly == DrawLayer.ALL_DET:
+                # All detections - each frame's detections in a different color
+                for frame in self._frames:
+                    self._ax.scatter([det.x for det in frame], [det.y for det in frame], edgecolor="green", marker="o")
+                    self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5, linestyle="--", zorder=zorder)
+                # end for
+
+            elif ly == DrawLayer.GMM_COV_ELL:
+                if self._cur_frame is not None:
+                    # GM-PHD components covariance ellipses
+                    for comp in self._gmm:
+                        ell = self.__get_cov_ellipse_from_comp(comp, 1., facecolor='none', edgecolor="black", linewidth=.5, zorder=zorder)
+                        self._ax.add_patch(ell)
+                    # end for
+                # end if
+
+            elif ly == DrawLayer.GMM_COV_MEAN:
+                if self._cur_frame is not None:
+                    # GM-PHD components means
+                    self._ax.scatter([comp.loc[0] for comp in self._gmm], [comp.loc[1] for comp in self._gmm], s=5, edgecolor="blue", marker="o", zorder=zorder)
+                # end if
+
+            elif ly == DrawLayer.EST_STATE:
+                # Estimated states
+                est_items = self._extract_states(bias=self.__ext_states_bias, use_integral=self.__ext_states_use_integral)
+                self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=200, c="gray", edgecolor="black", marker="o", zorder=zorder)
+
+            elif ly == DrawLayer.CUR_DET:
+                if self._cur_frame is not None:
+                    # Current detections
+                    det_pos_x: List[float] = [det.x for det in self._cur_frame]
+                    det_pos_y: List[float] = [det.y for det in self._cur_frame]
+                    self._ax.scatter(det_pos_x, det_pos_y, s=100, c="red", marker="x", zorder=zorder)
+                # end if
             # end if
-
-        elif self.__density_draw_style == DensityDrawStyle.DRAW_EVAL:
-            x, y, z = self._calc_density_map(grid_res=self.__n_bins_density_map)
-            self._ax.contourf(x, y, z, 20, cmap=cmap)
-
-        else:  # DensityDrawStyle.DRAW_HEATMAP
-            samples = self._gmm.samples(self.__n_samples_density_map)
-            det_borders = self._det_borders
-            self._ax.hist2d([s[0] for s in samples], [s[1] for s in samples], bins=self.__n_bins_density_map,
-                            range=[[det_borders.x_min, det_borders.x_max], [det_borders.y_min, det_borders.y_max]], density=False, cmap=cmap)
-        # end if
-
-        # All detections - each frame's detections in a different color
-        for frame in self._frames:
-            self._ax.scatter([det.x for det in frame], [det.y for det in frame], edgecolor="green", marker="o")
-            self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5, linestyle="--")
         # end for
-
-        # Estimated states
-        est_items = self._extract_states(bias=self.__ext_states_bias, use_integral=self.__ext_states_use_integral)
-        self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=200, c="gray", edgecolor="black", marker="o")
-
-        if self._cur_frame is not None:
-            # Current detections
-            det_pos_x: List[float] = [det.x for det in self._cur_frame]
-            det_pos_y: List[float] = [det.y for det in self._cur_frame]
-            self._ax.scatter(det_pos_x, det_pos_y, s=100, c="red", marker="x")
-
-            # GM-PHD components covariance ellipses
-            for comp in self._gmm:
-                ell = self.__get_cov_ellipse_from_comp(comp, 1., facecolor='none', edgecolor="black", linewidth=.5)
-                self._ax.add_patch(ell)
-            # end for
-
-            # GM-PHD components means
-            self._ax.scatter([comp.loc[0] for comp in self._gmm], [comp.loc[1] for comp in self._gmm], s=5, edgecolor="blue", marker="o")
-        # end if
     # end def
 
     def _cb_keyboard(self, cmd: str) -> None:
@@ -253,8 +281,8 @@ def main(argv: List[str]):
                "    Defines if the integral approach for extracting the current states should be used.\n" + \
                "\n" + \
                "    --density_draw_style=DENSITY_DRAW_STYLE:\n" + \
-               "    Sets the drawing style to visualizing the density/intensity map. Possible values are: DensityDrawStyle.DRAW_KDE (kernel density estimator), " \
-               "DensityDrawStyle.DRAW_EVAL (evaluate the correct value for each cell in a grid) and DensityDrawStyle.DRAW_HEATMAP (heatmap made of sampled points from the PHD).\n" + \
+               "    Sets the drawing style to visualizing the density/intensity map. Possible values are: DensityDrawStyle.KDE (kernel density estimator), " \
+               "DensityDrawStyle.EVAL (evaluate the correct value for each cell in a grid) and DensityDrawStyle.HEATMAP (heatmap made of sampled points from the PHD).\n" + \
                "    Example: DensityDrawStyle.DRAW_HEATMAP" + \
                "\n" + \
                "    --n_samples_density_map=N_SAMPLES_DENSITY_MAP:\n" + \
@@ -264,6 +292,11 @@ def main(argv: List[str]):
                "    --n_bins_density_map=N_BINS_DENSITY_MAP:\n" + \
                "    Sets the number bins for drawing the PHD density map.\n" + \
                "    Example: 100\n" + \
+               "\n" + \
+               "    --draw_layers=DRAW_LAYERS:\n" + \
+               "    Sets the list of drawing layers. Allows to draw only the required layers and in the desired order. As default all layers are drawn in a fixed order.\n" + \
+               "    Example 1: [DrawLayer.DENSITY_MAP, DrawLayer.EST_STATE]\n" \
+               "    Example 2: [layer for layer in DrawLayer if not layer == DrawLayer.GMM_COV_ELL and not layer == DrawLayer.GMM_COV_MEAN]\n" + \
                "\n" + \
                "\n" + \
                "GUI\n" + \
@@ -308,15 +341,16 @@ def main(argv: List[str]):
     max_components: int = 10
     ext_states_bias: float = 1.
     ext_states_use_integral: bool = False
-    density_draw_style: DensityDrawStyle = DensityDrawStyle.DRAW_HEATMAP
+    density_draw_style: DensityDrawStyle = DensityDrawStyle.HEATMAP
     n_samples_density_map: int = 10000
     n_bins_density_map: int = 100
+    draw_layers: Optional[List[DrawLayer]] = None
 
     try:
         opts, args = getopt.getopt(argv[1:], "hi:l:o:p:v:", ["help", "input=", "limits=", "output=", "observer_position=", "verbosity_level=",
                                                              "birth_gmm=", "p_survival=", "p_detection=", "mat_f=", "mat_q=", "mat_h=", "mat_r=", "clutter=",
                                                              "trunc_thresh=", "merge_thresh=", "max_components=",
-                                                             "ext_states_bias=", "ext_states_use_integral", "density_draw_style=", "n_samples_density_map=", "n_bins_density_map="])
+                                                             "ext_states_bias=", "ext_states_use_integral", "density_draw_style=", "n_samples_density_map=", "n_bins_density_map=", "draw_layers="])
 
     except getopt.GetoptError as e:
         print("Reading parameters caused error {}".format(e))
@@ -453,6 +487,21 @@ def main(argv: List[str]):
 
         elif opt == "--n_bins_density_map":
             n_bins_density_map = int(arg)
+
+        elif opt == "--draw_layers":
+            try:
+                draw_layers = eval(arg)
+            except Exception as e:
+                err_msg = str(e)
+            # end try
+
+            if isinstance(draw_layers, list):
+                for layer in draw_layers:
+                    if not isinstance(layer, DrawLayer):
+                        err = True
+                        break
+                    # end if
+                # end for
         # end if
 
         if err or err_msg:
@@ -470,7 +519,8 @@ def main(argv: List[str]):
                                                      f=f, q=q, h=h, r=r, clutter=clutter,
                                                      trunc_thresh=trunc_thresh, merge_thresh=merge_thresh, max_components=max_components,
                                                      ext_states_bias=ext_states_bias, ext_states_use_integral=ext_states_use_integral,
-                                                     density_draw_style=density_draw_style, n_samples_density_map=n_samples_density_map, n_bins_density_map=n_bins_density_map)
+                                                     density_draw_style=density_draw_style, n_samples_density_map=n_samples_density_map, n_bins_density_map=n_bins_density_map,
+                                                     draw_layers=draw_layers)
     sim.run()
 
 
