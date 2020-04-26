@@ -144,3 +144,5 @@ class FileWriter:
                     file.write("{} {} {}\n".format(lat, lon, frame_nr))
             # end for
         # end with
+    # end def
+# end class

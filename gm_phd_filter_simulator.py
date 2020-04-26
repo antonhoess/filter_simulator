@@ -13,7 +13,7 @@ import seaborn as sns
 from enum import Enum
 
 from filter_simulator.common import Logging, Limits, Position
-from filter_simulator.filter_simulator import FilterSimulator
+from filter_simulator.filter_simulator import FilterSimulator, SimStepPartConf
 from gm_phd_filter import GmPhdFilter, GmComponent, Gmm
 
 
@@ -55,7 +55,22 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         self.__logging: Logging = logging
         self.__draw_layers: Optional[List[DrawLayer]] = draw_layers if draw_layers is not None else [ly for ly in DrawLayer]
 
-    def _sim_loop_before_step_and_drawing(self):
+    def _set_sim_loop_step_part_conf(self):
+        # Configure the processing steps
+        sim_step_part_conf = SimStepPartConf()
+
+        sim_step_part_conf.add_user_step(self.__sim_loop_predict_and_update)
+        # sim_step_part_conf.add_draw_step()
+        # sim_step_part_conf.add_wait_for_trigger_step()
+        sim_step_part_conf.add_user_step(self.__sim_loop_prune)
+        sim_step_part_conf.add_draw_step()
+        sim_step_part_conf.add_wait_for_trigger_step()
+        sim_step_part_conf.add_load_next_frame_step()
+
+        return sim_step_part_conf
+    # end def
+
+    def __sim_loop_predict_and_update(self):
         if self._step < 0:
             self._predict_and_update([])
 
@@ -65,17 +80,17 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
             # Predict and update
             self._predict_and_update([np.array([det.x, det.y]) for det in self._cur_frame])
+        # end if
+    # end def
 
+    def __sim_loop_prune(self):
+        if self._step >= 0:
             # Prune
             self._prune(trunc_thresh=self.__trunc_thresh, merge_thresh=self.__merge_thresh, max_components=self.__max_components)
         # end if
     # end def
 
-    def _sim_loop_after_step_and_drawing(self):
-        pass
-    # end def
-
-    def _calc_density(self, x: np.ndarray, y: np.ndarray) -> float:
+    def __calc_density(self, x: np.ndarray, y: np.ndarray) -> float:
         # Code taken from eval_grid_2d()
         points = np.stack((x, y), axis=-1).reshape(-1, 2)
 
@@ -83,12 +98,12 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
         return np.array(vals).reshape(x.shape)
 
-    def _calc_density_map(self, grid_res: int = 100) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def __calc_density_map(self, grid_res: int = 100) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         x_: np.ndarray = np.linspace(self._det_borders.x_min, self._det_borders.x_max, grid_res)
         y_: np.ndarray = np.linspace(self._det_borders.y_min, self._det_borders.y_max, grid_res)
 
         x, y = np.meshgrid(x_, y_)
-        z: np.ndarray = np.array(self._calc_density(x, y))
+        z: np.ndarray = np.array(self.__calc_density(x, y))
 
         return x, y, z
 
@@ -121,7 +136,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
     def _update_window(self) -> None:
 
         for l, ly in enumerate(self.__draw_layers):
-            zorder = l  # XXX if x.use_zorder else 0
+            zorder = l
 
             if ly == DrawLayer.DENSITY_MAP:
                 # cmap = "Greys"
@@ -137,7 +152,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                     # end if
 
                 elif self.__density_draw_style == DensityDrawStyle.EVAL:
-                    x, y, z = self._calc_density_map(grid_res=self.__n_bins_density_map)
+                    x, y, z = self.__calc_density_map(grid_res=self.__n_bins_density_map)
                     self._ax.contourf(x, y, z, 20, cmap=cmap)
 
                 else:  # DensityDrawStyle.DRAW_HEATMAP
@@ -183,19 +198,6 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                 # end if
             # end if
         # end for
-    # end def
-
-    def _cb_keyboard(self, cmd: str) -> None:
-        if cmd == "":
-            self._next = True
-
-        elif cmd == "+":
-            pass  # XXX
-
-        elif cmd.startswith("-"):
-            pass
-            # XXX idx: int = int(cmd[1:])
-        # end if
     # end def
 
 

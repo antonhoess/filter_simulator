@@ -13,7 +13,7 @@ from matplotlib.patches import Ellipse
 import seaborn as sns
 
 from filter_simulator.common import Logging, Limits, Position
-from filter_simulator.filter_simulator import FilterSimulator
+from filter_simulator.filter_simulator import FilterSimulator, SimStepPartConf
 from particle_filter import ParticleFilter
 
 
@@ -27,7 +27,20 @@ class ParticleFilterSimulator(FilterSimulator, ParticleFilter):
         self.__ms_bandwidth: float = .1  # XXX Param?
         self.__logging: Logging = logging
 
-    def _sim_loop_before_step_and_drawing(self):
+    def _set_sim_loop_step_part_conf(self):
+        # Configure the processing steps
+        sim_step_part_conf = SimStepPartConf()
+
+        sim_step_part_conf.add_user_step(self.__sim_loop_before_step_and_drawing)
+        sim_step_part_conf.add_draw_step()
+        sim_step_part_conf.add_wait_for_trigger_step()
+        sim_step_part_conf.add_load_next_frame_step()
+        sim_step_part_conf.add_user_step(self.__sim_loop_after_step_and_drawing)
+
+        return sim_step_part_conf
+    # end def
+
+    def __sim_loop_before_step_and_drawing(self):
         # Calculate mean shift
         clustering: bool = True
         if clustering:
@@ -39,7 +52,7 @@ class ParticleFilterSimulator(FilterSimulator, ParticleFilter):
         # end if
     # end def
 
-    def _sim_loop_after_step_and_drawing(self):
+    def __sim_loop_after_step_and_drawing(self):
         # Set current frame
         self._cur_frame = self._frames[self._step]
 
@@ -65,7 +78,7 @@ class ParticleFilterSimulator(FilterSimulator, ParticleFilter):
 
         return accum
 
-    def _calc_density_map(self, grid_res: int = 100) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def __calc_density_map(self, grid_res: int = 100) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         x_: np.ndarray = np.linspace(self._det_borders.x_min, self._det_borders.x_max, grid_res)
         y_: np.ndarray = np.linspace(self._det_borders.y_min, self._det_borders.y_max, grid_res)
 
@@ -75,11 +88,10 @@ class ParticleFilterSimulator(FilterSimulator, ParticleFilter):
         return x, y, z
 
     def _update_window(self) -> None:
-        print(".", end="")  # XXX
         # Draw density map
         draw_kde: bool = True  # XXX parameter
         if not draw_kde:
-            x, y, z = self._calc_density_map(grid_res=100)
+            x, y, z = self.__calc_density_map(grid_res=100)
             self._ax.contourf(x, y, z, 20, cmap='Blues')
         else:
             x = [p.x for p in self._particles]
@@ -119,19 +131,6 @@ class ParticleFilterSimulator(FilterSimulator, ParticleFilter):
                                            height=ell_radius_y * 2, facecolor='none', edgecolor="black", linewidth=.5)
                 self._ax.add_patch(ellipse)
             # end for
-        # end if
-    # end def
-
-    def _cb_keyboard(self, cmd: str) -> None:
-        if cmd == "":
-            self._next = True
-
-        elif cmd == "+":
-            pass  # XXX
-
-        elif cmd.startswith("-"):
-            pass
-            # XXX idx: int = int(cmd[1:])
         # end if
     # end def
 

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, List, Callable
 from abc import ABC, abstractmethod
 import os
 import time
@@ -10,10 +10,61 @@ import matplotlib.axes
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import matplotlib.backend_bases
+from enum import Enum
 
 from .common import Logging, SimulationDirection, Limits, Position, Detection, FrameList, WGS84ToENUConverter
 from .window_helper import WindowMode, LimitsMode, WindowModeChecker
 from .io_helper import FileReader, FileWriter, InputLineHandlerLatLonIdx
+
+
+class SimStepPart(Enum):
+    DRAW = 0  # Draw the current scene
+    WAIT_FOR_TRIGGER = 1  # Wait for user input to continue with the next step
+    LOAD_NEXT_FRAME = 2  # Load the next data (frame)
+    USER = 3  # Call user defined function
+# end class
+
+
+class SimStepPartConf:
+    def __init__(self):
+        self.__step_parts: List[SimStepPart] = []
+        self.__user_step_parts: List[Callable] = []
+        self.__user_step_part_cur_idx = 0
+    # end def
+
+    @property
+    def step_parts(self):
+        return self.__step_parts
+
+    def add_draw_step(self):
+        self.__step_parts.append(SimStepPart.DRAW)
+    # end def
+
+    def add_load_next_frame_step(self):
+        self.__step_parts.append(SimStepPart.LOAD_NEXT_FRAME)
+    # end def
+
+    def add_wait_for_trigger_step(self):
+        self.__step_parts.append(SimStepPart.WAIT_FOR_TRIGGER)
+    # end def
+
+    def add_user_step(self, user_func: Callable):
+        self.__step_parts.append(SimStepPart.USER)
+        self.__user_step_parts.append(user_func)
+    # end def
+
+    def get_next_user_step(self) -> Callable:
+        user_func = self.__user_step_parts[self.__user_step_part_cur_idx]
+
+        if self.__user_step_part_cur_idx < len(self.__user_step_parts) - 1:
+            self.__user_step_part_cur_idx += 1
+        else:
+            self.__user_step_part_cur_idx = 0
+        # end if
+
+        return user_func
+    # end def
+# end class
 
 
 class FilterSimulator(ABC):
@@ -38,6 +89,8 @@ class FilterSimulator(ABC):
         self.__limits_mode: LimitsMode = LimitsMode.ALL_DETECTIONS_INIT_ONLY
         self.__limits_mode_inited: bool = False
         self.__prev_lim: Limits = Limits(0, 0, 0, 0)
+
+        self.__sim_step_part_conf = self._set_sim_loop_step_part_conf()
 
     @property
     def _step(self) -> int:
@@ -77,19 +130,7 @@ class FilterSimulator(ABC):
         # end if
 
         return False
-
-    def __wait_for_valid_next_step(self) -> None:
-        while True:
-            # Wait for Return-Key-Press (console) of mouse click (GUI)
-            while not self.__next:
-                time.sleep(0.1)
-
-            self.__next = False
-
-            # Only continue when the next requested step is valid, e.g. it is within its boundaries
-            if self.__set_next_step():
-                break
-        # end while
+    # end def
 
     def run(self):
         # NB: Mark all threads as daemons so that the process terminates when the GUI thread termines.
@@ -299,22 +340,39 @@ class FilterSimulator(ABC):
 
         # Simulation loop
         while True:
-            # Filter dependent function
-            self._sim_loop_before_step_and_drawing()
+            for sp in self.__sim_step_part_conf.step_parts:
+                if sp == SimStepPart.DRAW:
+                    # Draw - and wait until drawing has finished (do avoid changing the filter's state before it is drawn)
+                    self.__refresh.set()
+                    self.__refresh_finished.wait()
+                    self.__refresh_finished.clear()
 
-            # Draw
-            self.__refresh.set()
+                elif sp == SimStepPart.WAIT_FOR_TRIGGER:
+                    # Wait for Return-Key-Press (console) or mouse click (GUI)
+                    while not self.__next:
+                        time.sleep(0.1)
 
-            # Wait until drawing has finished (do avoid changing the filter's state before it is drawn)
-            self.__refresh_finished.wait()
-            self.__refresh_finished.clear()
+                    self.__next = False
 
-            # Wait for a valid next step
-            self.__wait_for_valid_next_step()
-            self.__logging.print_verbose(Logging.INFO, "Step {}".format(self.__step))
+                elif sp == SimStepPart.LOAD_NEXT_FRAME:
+                    # Only continue when the next requested step is valid, e.g. it is within its boundaries
+                    err_shown = False
 
-            # Filter dependent function
-            self._sim_loop_after_step_and_drawing()
+                    while not self.__set_next_step():
+                        if not err_shown:
+                            err_shown = True
+                            self.__logging.print_verbose(Logging.WARNING, "There are no more data frames to load.")
+                        # end if
+
+                        time.sleep(0.1)
+                    # end while
+
+                    self.__logging.print_verbose(Logging.INFO, "Step {}".format(self.__step))
+
+                else:  # sp == SimulationStepPart.USER
+                    self.__sim_step_part_conf.get_next_user_step()()
+                # end if
+            # end for
         # end while
     # end def
 
@@ -370,18 +428,23 @@ class FilterSimulator(ABC):
     # end def
 
     @abstractmethod
-    def _sim_loop_before_step_and_drawing(self) -> None:
-        pass
-
-    @abstractmethod
-    def _sim_loop_after_step_and_drawing(self) -> None:
+    def _set_sim_loop_step_part_conf(self) -> SimStepPartConf:
         pass
 
     @abstractmethod
     def _update_window(self) -> None:
         pass
 
-    @abstractmethod
-    def _cb_keyboard(self, cmd: str) -> None:
-        pass
+    def _cb_keyboard(self, cmd: str) -> None:  # Can be overloaded
+        if cmd == "":
+            self._next = True
+
+        elif cmd == "+":
+            pass  # XXX
+
+        elif cmd.startswith("-"):
+            pass
+            # XXX idx: int = int(cmd[1:])
+        # end if
+    # end def
 # end class
