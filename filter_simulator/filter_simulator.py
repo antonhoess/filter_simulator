@@ -12,9 +12,9 @@ import matplotlib.animation as animation
 import matplotlib.backend_bases
 from enum import Enum
 
-from .common import Logging, SimulationDirection, Limits, Position, Detection, FrameList, WGS84ToENUConverter
+from .common import Logging, SimulationDirection, Limits, Position, Detection, FrameList
 from .window_helper import WindowMode, LimitsMode, WindowModeChecker
-from .io_helper import FileReader, FileWriter, InputLineHandlerLatLonIdx
+from .io_helper import FileWriter
 
 
 class SimStepPart(Enum):
@@ -68,11 +68,11 @@ class SimStepPartConf:
 
 
 class FilterSimulator(ABC):
-    def __init__(self, fn_in: str, fn_out: str, limits: Limits, observer: Optional[Position], logging: Logging) -> None:
-        self.__fn_in: str = fn_in
+    def __init__(self, data_provider: IDataProvider, fn_out: str, limits: Limits, observer: Optional[Position], logging: Logging) -> None:
+        self.__data_provider = data_provider
         self.__fn_out: str = fn_out
         self.__step: int = -1
-        self.__next: bool = False
+        self.__next_part_step: bool = False
         self.__frames: FrameList = FrameList()
         self.__simulation_direction: SimulationDirection = SimulationDirection.FORWARD
         self.__ax: Optional[matplotlib.axes.Axes] = None
@@ -97,12 +97,12 @@ class FilterSimulator(ABC):
         return self.__step
 
     @property
-    def _next(self) -> bool:
-        return self.__next
+    def _next_part_step(self) -> bool:
+        return self.__next_part_step
 
-    @_next.setter
-    def _next(self, value: bool) -> None:
-        self.__next = value
+    @_next_part_step.setter
+    def _next_part_step(self, value: bool) -> None:
+        self.__next_part_step = value
 
     @property
     def _frames(self) -> FrameList:
@@ -120,11 +120,13 @@ class FilterSimulator(ABC):
         if self.__simulation_direction == SimulationDirection.FORWARD:
             if self.__step < (len(self._frames) - 1):
                 self.__step += 1
+
                 return True
             # end if
         else:
             if self.__step > 0:
                 self.__step -= 1
+
                 return True
             # end if
         # end if
@@ -198,7 +200,7 @@ class FilterSimulator(ABC):
 
                 if event.key == "control":
                     self.__simulation_direction = SimulationDirection.FORWARD
-                    self.__next = True
+                    self.__next_part_step = True
 
                 elif event.key == "shift":
                     pass
@@ -317,23 +319,13 @@ class FilterSimulator(ABC):
     # end def
 
     def __processing(self) -> None:
-        if not os.path.isfile(self.__fn_in):
-            return
-
-        # Read all measurements from file
-        file_reader: FileReader = FileReader(self.__fn_in)
-        line_handler: InputLineHandlerLatLonIdx = InputLineHandlerLatLonIdx()
-        file_reader.read(line_handler)
-        self.__frames = line_handler.frame_list
+        self.__frames = self.__data_provider.frame_list
 
         if len(self._frames) == 0:
             return
 
         if not self.__observer_is_set:
             self.__observer = self._frames.calc_center()
-
-        # Convert from WGS84 to ENU, with its origin at the center of all points
-        self.__frames = WGS84ToENUConverter.convert(frame_list_wgs84=self._frames, observer=self.__observer)
 
         # Get the borders around the points for creating new particles later on
         self.__det_borders = self._frames.calc_limits()
@@ -349,10 +341,10 @@ class FilterSimulator(ABC):
 
                 elif sp == SimStepPart.WAIT_FOR_TRIGGER:
                     # Wait for Return-Key-Press (console) or mouse click (GUI)
-                    while not self.__next:
+                    while not self.__next_part_step:
                         time.sleep(0.1)
 
-                    self.__next = False
+                    self.__next_part_step = False
 
                 elif sp == SimStepPart.LOAD_NEXT_FRAME:
                     # Only continue when the next requested step is valid, e.g. it is within its boundaries
@@ -437,7 +429,7 @@ class FilterSimulator(ABC):
 
     def _cb_keyboard(self, cmd: str) -> None:  # Can be overloaded
         if cmd == "":
-            self._next = True
+            self._next_part_step = True
 
         elif cmd == "+":
             pass  # XXX

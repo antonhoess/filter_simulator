@@ -13,17 +13,23 @@ import seaborn as sns
 from enum import Enum
 
 from filter_simulator.common import Logging, Limits, Position
+from filter_simulator.io_helper import FileReader, InputLineHandlerLatLonIdx
 from filter_simulator.filter_simulator import FilterSimulator, SimStepPartConf
+from filter_simulator.data_provider_interface import IDataProvider
+from filter_simulator.data_provider_converter import Wgs84ToEnuConverter
+from filter_simulator.dyn_matrix import TransitionModel, PcwConstWhiteAccelModelNd
 from gm_phd_filter import GmPhdFilter, GmComponent, Gmm
+from phd_filter_data_provider import PhdFilterDataProvider
 
 
 class DrawLayer(Enum):
     DENSITY_MAP = 0
     ALL_DET = 1
-    GMM_COV_ELL = 2
-    GMM_COV_MEAN = 3
-    EST_STATE = 4
-    CUR_DET = 5
+    ALL_DET_CONN = 2
+    GMM_COV_ELL = 3
+    GMM_COV_MEAN = 4
+    EST_STATE = 5
+    CUR_DET = 6
 # end class
 
 
@@ -34,16 +40,29 @@ class DensityDrawStyle(Enum):
 # end class
 
 
+class DataProviderType(Enum):
+    FILE_READER = 0
+    SIMULATOR = 1
+# end class
+
+
+class CoordSysConv(Enum):
+    NONE = 0
+    WGS84 = 1
+# end class
+
+
 class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
-    def __init__(self, fn_in: str, fn_out: str, limits: Limits, observer: Position, logging: Logging,
+    def __init__(self, data_provider: IDataProvider, fn_out: str, limits: Limits, observer: Position, logging: Logging,
                  birth_gmm: List[GmComponent], p_survival: float, p_detection: float,
                  f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, clutter: float,
                  trunc_thresh: float, merge_thresh: float, max_components: int,
                  ext_states_bias: float, ext_states_use_integral: bool,
                  density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int,
                  draw_layers: Optional[List[DrawLayer]]):
-        FilterSimulator.__init__(self, fn_in, fn_out, limits, observer, logging)
+        FilterSimulator.__init__(self, data_provider, fn_out, limits, observer, logging)
         GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, clutter=clutter, logging=logging)
+
         self.__trunc_thresh = trunc_thresh
         self.__merge_thresh = merge_thresh
         self.__max_components = max_components
@@ -165,7 +184,12 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
             elif ly == DrawLayer.ALL_DET:
                 # All detections - each frame's detections in a different color
                 for frame in self._frames:
-                    self._ax.scatter([det.x for det in frame], [det.y for det in frame], edgecolor="green", marker="o")
+                    self._ax.scatter([det.x for det in frame], [det.y for det in frame], edgecolor="green", marker="o", zorder=zorder)
+                # end for
+
+            elif ly == DrawLayer.ALL_DET_CONN:
+                # Connections between all detections - only makes sense, if they are manually created or created in a very ordered way, otherwise it's just chaos
+                for frame in self._frames:
                     self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5, linestyle="--", zorder=zorder)
                 # end for
 
@@ -214,8 +238,10 @@ def main(argv: List[str]):
                "\n" + \
                "-h, --help: Prints this help.\n" + \
                "\n" + \
-               "-i, --input=INPUT_FILE:\n" + \
-               "    Parse detections with coordinates in WGS84 from INPUT_FILE.\n" + \
+               "    --data_provider=DATA_PROVIDER:\n" + \
+               "       Sets the data provider type that defines the data source. Possible values are: DataProviderType.FILE_READER (reads lines from file defined in --input_file), " \
+               "DataProviderType.SIMULATOR (simulates the PHD behaviour defined by the paraemters given in section SIMULATOR).\n" + \
+               "    Example: DensityDrawStyle.DRAW_HEATMAP" + \
                "\n" + \
                "-o, --output=OUTPUT_FILE:\n" \
                "    Sets the output file to store the manually set coordinates converted to WGS84 to OUTPUT_FILE.\n" + \
@@ -301,6 +327,21 @@ def main(argv: List[str]):
                "    Example 2: [layer for layer in DrawLayer if not layer == DrawLayer.GMM_COV_ELL and not layer == DrawLayer.GMM_COV_MEAN]\n" + \
                "\n" + \
                "\n" + \
+               "FILE READER\n" + \
+               "    Reads detections from file.\n" \
+               "\n" + \
+               "-i, --input=INPUT_FILE:\n" + \
+               "    Parse detections with coordinates from INPUT_FILE.\n" + \
+               "\n" + \
+               "    --coord_system_conversion=COORD_SYSTEM_CONVERSION:\n" + \
+               "    Defines the conversion of the parsed coordinates into another coordinate system.\n" + \
+               "\n" + \
+               "\n" + \
+               "SIMULATOR\n" + \
+               "    Calculates detections from simulation.\n" \
+               "XXX\n" \
+               "\n" + \
+               "\n" + \
                "GUI\n" + \
                "    Mouse and keyboard events on the plotting window (GUI).\n" \
                "\n" + \
@@ -321,10 +362,12 @@ def main(argv: List[str]):
                "        * SHIFT + LEFT CLICK: Add frame.\n" + \
                "        * CTRL + RIGHT CLICK: Remove last set point.\n" + \
                "        * SHIFT + RIGHT CLICK: Remove last frame.\n" + \
+               "\n" + \
                ""
     # end def
 
-    inputfile: str = ""
+    data_provider_type: DataProviderType = DataProviderType.FILE_READER
+
     outputfile: str = "out.lst"
     limits: Limits = Limits(-10, -10, 10, 10)
     verbosity: Logging = Logging.INFO
@@ -333,10 +376,14 @@ def main(argv: List[str]):
     birth_gmm: Gmm = Gmm([GmComponent(0.1, [0, 0], np.eye(2) * 10. ** 2)])
     p_survival: float = 0.9
     p_detection: float = 0.9
+    model = TransitionModel.INDIVIDUAL  # XXX in parameter aufnehmen
+    dt = 1.  # XXX auch als param aufnehmen
     f: np.ndarray = np.eye(2)
     q: np.ndarray = np.eye(2) * 0.
     h: np.ndarray = np.eye(2)
     r: np.ndarray = np.eye(2) * .1
+    sigma_vel_x = .5  # XXX in parameter aufnehmen
+    sigma_vel_y = .5  # XXX in parameter aufnehmen
     clutter: float = 2e-6
     trunc_thresh: float = 1e-6
     merge_thresh: float = 0.01
@@ -348,11 +395,15 @@ def main(argv: List[str]):
     n_bins_density_map: int = 100
     draw_layers: Optional[List[DrawLayer]] = None
 
+    inputfile: str = ""
+    coord_system_conversion: CoordSysConv = CoordSysConv.NONE
+
     try:
-        opts, args = getopt.getopt(argv[1:], "hi:l:o:p:v:", ["help", "input=", "limits=", "output=", "observer_position=", "verbosity_level=",
+        opts, args = getopt.getopt(argv[1:], "hi:l:o:p:v:", ["help", "data_provider=", "limits=", "output=", "observer_position=", "verbosity_level=",
                                                              "birth_gmm=", "p_survival=", "p_detection=", "mat_f=", "mat_q=", "mat_h=", "mat_r=", "clutter=",
                                                              "trunc_thresh=", "merge_thresh=", "max_components=",
-                                                             "ext_states_bias=", "ext_states_use_integral", "density_draw_style=", "n_samples_density_map=", "n_bins_density_map=", "draw_layers="])
+                                                             "ext_states_bias=", "ext_states_use_integral", "density_draw_style=", "n_samples_density_map=", "n_bins_density_map=", "draw_layers=",
+                                                             "input=", "coord_system_conversion="])
 
     except getopt.GetoptError as e:
         print("Reading parameters caused error {}".format(e))
@@ -368,8 +419,16 @@ def main(argv: List[str]):
             print(usage())
             sys.exit()
 
-        elif opt in ("-i", "--input"):
-            inputfile = arg
+        elif opt == "--data_provider":
+            try:
+                data_provider_type = eval(arg)
+            except Exception as e:
+                err_msg = str(e)
+            # end try
+
+            if not isinstance(data_provider_type, DataProviderType):
+                err = True
+            # end if
 
         elif opt in ("-l", "--limits"):
             fields: List[str] = arg.split(";")
@@ -504,6 +563,21 @@ def main(argv: List[str]):
                         break
                     # end if
                 # end for
+            # end if
+
+        elif opt == "--input":
+            inputfile = arg
+
+        elif opt == "--coord_system_conversion":
+            try:
+                coord_system_conversion = eval(arg)
+            except Exception as e:
+                err_msg = str(e)
+            # end try
+
+            if not isinstance(coord_system_conversion, CoordSysConv):
+                err = True
+            # end if
         # end if
 
         if err or err_msg:
@@ -516,13 +590,42 @@ def main(argv: List[str]):
         # end if
     # end for
 
-    sim: GmPhdFilterSimulator = GmPhdFilterSimulator(fn_in=inputfile, fn_out=outputfile, limits=limits, observer=observer, logging=verbosity,
+    # Evaluate dynamic matrices
+    model = TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND  # XXX
+
+    if model == TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND:
+        dt = 1.0
+        m = PcwConstWhiteAccelModelNd(dim=2, sigma=(0.4, 0.3))  # XXX
+
+        f = m.eval_f(dt)
+        q = m.eval_q(dt)
+    # end if
+
+    # Get data from a data provider
+    if data_provider_type == DataProviderType.FILE_READER:
+        # Read all measurements from file
+        file_reader: FileReader = FileReader(inputfile)
+        line_handler: InputLineHandlerLatLonIdx = InputLineHandlerLatLonIdx()
+        file_reader.read(line_handler)
+        data_provider = file_reader
+
+    else:  # data_provider_type == DataProviderType.SIMULATOR
+        # XXX replace fixed paraemter values
+        data_provider = PhdFilterDataProvider(f=f, q=q, dt=dt, t_max=50, n_birth=1, var_birth=1, n_fa=10, var_fa=10, limits=limits, p_survival=p_survival, p_detection=p_detection, sigma_vel_x=sigma_vel_x, sigma_vel_y=sigma_vel_y)
+    # end if
+
+    # Convert data from certain coordinate systems to ENU, which is used internally
+    if coord_system_conversion == CoordSysConv.WGS84:
+        data_provider = Wgs84ToEnuConverter(data_provider.frame_list, observer)
+    # end if
+    sim: GmPhdFilterSimulator = GmPhdFilterSimulator(data_provider=data_provider, fn_out=outputfile, limits=limits, observer=observer, logging=verbosity,
                                                      birth_gmm=birth_gmm, p_survival=p_survival, p_detection=p_detection,
                                                      f=f, q=q, h=h, r=r, clutter=clutter,
                                                      trunc_thresh=trunc_thresh, merge_thresh=merge_thresh, max_components=max_components,
                                                      ext_states_bias=ext_states_bias, ext_states_use_integral=ext_states_use_integral,
                                                      density_draw_style=density_draw_style, n_samples_density_map=n_samples_density_map, n_bins_density_map=n_bins_density_map,
                                                      draw_layers=draw_layers)
+
     sim.run()
 
 

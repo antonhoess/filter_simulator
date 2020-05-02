@@ -6,18 +6,16 @@ import numpy as np
 import pymap3d as pm
 
 from .common import FrameList, Position, Detection
+from .data_provider_interface import IDataProvider
 
 
 class InputLineHandler(ABC):
-    def __init__(self) -> None:
-        super().__init__()
-
     @abstractmethod
     def handle_line(self, line) -> None:
         pass
 
 
-class InputLineHandlerLatLonIdx(InputLineHandler):
+class InputLineHandlerLatLonIdx(InputLineHandler, IDataProvider):
     def __init__(self) -> None:
         self.__cur_idx: Optional[int] = None
         self.__frame_list: FrameList = FrameList()

@@ -1,8 +1,6 @@
 from __future__ import annotations
 from enum import IntEnum
 from typing import List, Callable, Optional
-import pymap3d as pm
-import numpy as np
 
 
 class Logging(IntEnum):
@@ -207,30 +205,5 @@ class FrameList:
         limits = self.calc_limits()
 
         return Position(x=(limits.x_min + limits.x_max) / 2, y=(limits.y_min + limits.y_max) / 2)
-    # end def
-# end class
-
-
-class WGS84ToENUConverter:
-    @staticmethod
-    def convert(frame_list_wgs84: FrameList, observer: Optional[Position]) -> FrameList:
-        frame_list_enu: FrameList = FrameList()
-
-        if observer is None:
-            observer = frame_list_wgs84.calc_center()
-
-        for frame in frame_list_wgs84:
-            frame_list_enu.add_empty_frame()
-
-            for detection in frame:
-                # Convert...
-                e, n, _ = pm.geodetic2enu(np.asarray(detection.x), np.asarray(detection.y), np.asarray(0),
-                                          np.asarray(observer.x), np.asarray(observer.y), np.asarray(0),
-                                          ell=None, deg=True)
-                frame_list_enu.get_current_frame().add_detection(Detection(float(e), float(n)))
-            # end for
-        # end for
-
-        return frame_list_enu
     # end def
 # end class
