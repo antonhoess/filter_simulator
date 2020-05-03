@@ -97,7 +97,7 @@ class Simulator:
 
         self.__fig = None
         self.__ax = None
-        self.__step_interval = .05  # [s]
+        self.__step_interval = .02  # [s]
 
         self.__is_drawing = False
         self.__tt = 0
@@ -137,6 +137,9 @@ class Simulator:
 
     @staticmethod
     def __sample_from_discrete_distribution(num: int, var: int, alpha=None, beta=None):
+        if num == 0:
+            return 0
+
         c_is_set = alpha is not None and beta is not None
 
         if num == var:  # Poisson
@@ -160,8 +163,8 @@ class Simulator:
     # end def
 
     @staticmethod
-    def __sample_random_from_range(min: float, max: float):
-        return min + (max - min) * random.random()
+    def __sample_random_from_range(min_val: float, max_val: float):
+        return min_val + (max_val - min_val) * random.random()
     # end def
 
     def run(self):
@@ -229,7 +232,7 @@ class Simulator:
             # Create birth according to the chosen model
             ############################################
             # Determine number of newly born targets
-            n_births = self.__sample_from_discrete_distribution(num=self.n_fa, var=self.var_fa)
+            n_births = self.__sample_from_discrete_distribution(num=self.n_birth, var=self.var_birth)
 
             for ii in range(n_births):
                 self.__objects.append([])
@@ -243,7 +246,7 @@ class Simulator:
             # Create measurement data (simulated by p_d and added noise)
             ############################################################
             for ii in range(len(self.__objects)):
-                obj = self.__objects[ii][-1]
+                obj = self.__objects[ii][-1]  # Get current objet state (therefore the last element in the objects history)
 
                 self.__gt[tt].append(Pos(obj.pos_x, obj.pos_y))
 
@@ -304,7 +307,9 @@ class Simulator:
 class PhdFilterDataProvider(IDataProvider):
     def __init__(self, f: np.ndarray, q: np.ndarray, dt: float, t_max: int, n_birth: int, var_birth: int, n_fa: int, var_fa: int, limits: Limits, p_survival: float, p_detection: float, sigma_vel_x: float, sigma_vel_y: float):
         self.__frame_list: FrameList = FrameList()
-        meas_data, ground_truth, _all_objects = Simulator(f, q, dt, t_max, n_birth, var_birth, n_fa, var_fa, limits, p_survival, p_detection, sigma_vel_x, sigma_vel_y, seed=None, show_visu=False).run()
+        show_visu=False
+        #show_visu=True
+        meas_data, ground_truth, _all_objects = Simulator(f, q, dt, t_max, n_birth, var_birth, n_fa, var_fa, limits, p_survival, p_detection, sigma_vel_x, sigma_vel_y, seed=None, show_visu=show_visu).run()
 
         for data in meas_data:
             self.__frame_list.add_empty_frame()

@@ -568,23 +568,29 @@ g.gmm
         num_to_add = int(round(bias * self._gmm.get_total_weight()))
         self.__logging.print_verbose(Logging.DEBUG, "bias is %g, num_to_add is %i" % (bias, num_to_add))
 
-        # A temporary list of peaks which will gradually be decimated as we steal from its highest peaks
+        # A temporary list of peaks p will gradually be decimated as we steal from its highest peaks
         peaks = [GmComponent(comp.weight, comp.loc, None) for comp in self._gmm]
 
         items = []
         while num_to_add > 0:
-            windex = 0
-            wsize = 0
-            for which, peak in enumerate(peaks):
-                if peak.weight > wsize:
-                    windex = which
-                    wsize = peak.weight
-            # add the winner
-            items.append(deepcopy(peaks[windex].loc))
-            peaks[windex].weight -= 1.0
+            # Find weightiest peak
+            p_index = 0
+            p_weight = 0
+            for p, peak in enumerate(peaks):
+                if peak.weight > p_weight:
+                    p_index = p
+                    p_weight = peak.weight
+                # end if
+            # end for
+
+            # Add the winner
+            items.append(deepcopy(peaks[p_index].loc))
+            peaks[p_index].weight -= 1.0
             num_to_add -= 1
+        # end while
 
         return items
+    # end def
 # end class
 
 

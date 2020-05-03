@@ -11,10 +11,13 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import matplotlib.backend_bases
 from enum import Enum
+import re
 
 from .common import Logging, SimulationDirection, Limits, Position, Detection, FrameList
 from .window_helper import WindowMode, LimitsMode, WindowModeChecker
 from .io_helper import FileWriter
+from .data_provider_interface import IDataProvider
+from .data_provider_converter import CoordSysConv
 
 
 class SimStepPart(Enum):
@@ -68,8 +71,10 @@ class SimStepPartConf:
 
 
 class FilterSimulator(ABC):
-    def __init__(self, data_provider: IDataProvider, fn_out: str, limits: Limits, observer: Optional[Position], logging: Logging) -> None:
+    def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv, fn_out: str,
+                 limits: Limits, limits_mode: LimitsMode, observer: Optional[Position], logging: Logging) -> None:
         self.__data_provider = data_provider
+        self.__output_coord_system_conversion: CoordSysConv = output_coord_system_conversion
         self.__fn_out: str = fn_out
         self.__step: int = -1
         self.__next_part_step: bool = False
@@ -86,11 +91,29 @@ class FilterSimulator(ABC):
         self.__refresh_finished: threading.Event = threading.Event()
         self.__limits_manual: Limits = limits
         self.__det_borders: Limits = self.__limits_manual
-        self.__limits_mode: LimitsMode = LimitsMode.ALL_DETECTIONS_INIT_ONLY
+        self.__limits_mode: LimitsMode = limits_mode
         self.__limits_mode_inited: bool = False
         self.__prev_lim: Limits = Limits(0, 0, 0, 0)
 
         self.__sim_step_part_conf = self._set_sim_loop_step_part_conf()
+        self.__fn_out_seq_max: int = 9999
+        self.__fn_out_fill_gaps = False
+
+    @property
+    def fn_out_seq_max(self) -> int:
+        return self.__fn_out_seq_max
+
+    @fn_out_seq_max.setter
+    def fn_out_seq_max(self, value: int) -> None:
+        self.__fn_out_seq_max = value
+
+    @property
+    def fn_out_fill_gaps(self) -> bool:
+        return self.__fn_out_fill_gaps
+
+    @fn_out_fill_gaps.setter
+    def fn_out_fill_gaps(self, value: bool) -> None:
+        self.__fn_out_fill_gaps = value
 
     @property
     def _step(self) -> int:
@@ -178,6 +201,15 @@ class FilterSimulator(ABC):
     def __cb_key_release_event(self, event: matplotlib.backend_bases.KeyEvent):
         self.__window_mode_checker.check_event(action="key_release_event", event=event)
 
+        fields = event.key.split("+")
+        
+        if len(fields) == 2 and ("ctrl" in fields or "control" in fields) and "z" in fields:
+            borders = self._frames.calc_limits()
+            self._ax.set_xlim(borders.x_min, borders.x_max)
+            self._ax.set_ylim(borders.y_min, borders.y_max)
+        # end if
+    # end def
+
     def __handle_mpl_event(self, event: matplotlib.backend_bases.MouseEvent):
         # xxx mit überlegen, in welchem modus ich die punkte (also mit mehrerer detektionen pro frame) durch klicken
         # erstellen will - vllt. auch zweilei modi. die geklickten punkte entsprechend eingefärbt darstellen und
@@ -195,6 +227,7 @@ class FilterSimulator(ABC):
             # Right mouse button: Navigate forwards / backwards
             #   * Ctrl: Forwards
             #   * Shift: Backwards
+            #   * Ctrl+Shift: Store detections
             if event.button == 3:  # Right click
                 self.__logging.print_verbose(Logging.DEBUG, "Right click")
 
@@ -207,6 +240,9 @@ class FilterSimulator(ABC):
                     # XXX makes no sense: self.simulation_direction = SimulationDirection.BACKWARD
                     # self.next = True
                 # end if
+
+                elif WindowModeChecker.key_is_ctrl_shift(event.key):
+                    self.write_points_to_file(self.__frames, self.__output_coord_system_conversion)
             # end if
 
         elif self.__window_mode_checker.get_current_mode() == WindowMode.MANUAL_EDITING:
@@ -216,6 +252,7 @@ class FilterSimulator(ABC):
             # Right mouse button: Remove
             #   * Ctrl: Remove Points
             #   * Shift: Remove Frame / Track
+            #   * Ctrl+Shift: Store detections
             if event.button == 1:  # Left click
                 if event.key == "control":
                     e: float = event.xdata
@@ -249,27 +286,35 @@ class FilterSimulator(ABC):
                     self.__manual_frames.del_last_frame()
 
                 elif WindowModeChecker.key_is_ctrl_shift(event.key):
-                    n_seq_max = 99
-                    fn_out = FileWriter.get_next_sequence_filename(".", filename_format=(self.__fn_out + "_{:02d}"),
-                                                                   n_seq_max=n_seq_max, fill_gaps=False)
+                    self.write_points_to_file(self.__manual_frames, self.__output_coord_system_conversion)
+                # end if event.key == ...
 
-                    if fn_out is not None:
-                        self.__logging.print_verbose(Logging.INFO,
-                                                     "Write manual points ({} frames with {} detections) to file {}".
-                                                     format(len(self.__manual_frames),
-                                                            self.__manual_frames.get_number_of_detections(), fn_out))
-
-                        file_writer = FileWriter(fn_out)
-                        file_writer.write(self.__manual_frames, self.__observer)
-                    else:
-                        self.__logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename"
-                                                                    "{} and a max. sequence number of {}. Try to"
-                                                                    "remove some old files.".format(self.__fn_out,
-                                                                                                    n_seq_max))
-
-            # end if event.button ...
+            # end if event.button == ...
 
             self.__refresh.set()
+        # end if WindowMode.MANUAL_EDITING:
+    # end def
+
+    def write_points_to_file(self, frames: FrameList, output_coord_system_conversion: CoordSysConv = CoordSysConv.NONE):
+        len_n_seq_max = len(str(self.__fn_out_seq_max))
+        filename_format = f"{self.__fn_out}_{{:0{len_n_seq_max}d}}"
+        filename_search_format = f"^{re.escape(self.__fn_out)}_(\d{{{len_n_seq_max}}})$"
+
+        fn_out = FileWriter.get_next_sequence_filename(".", filename_format=filename_format, filename_search_format=filename_search_format,
+                                                       n_seq_max=self.__fn_out_seq_max, fill_gaps=self.__fn_out_fill_gaps)
+
+        if fn_out is not None:
+            self.__logging.print_verbose(Logging.INFO,
+                                         "Write points ({} frames with {} detections) to file {}".
+                                         format(len(frames),
+                                                frames.get_number_of_detections(), fn_out))
+
+            file_writer = FileWriter(fn_out)
+            file_writer.write(frames, self.__observer, output_coord_system_conversion)
+        else:
+            self.__logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename "
+                                                        "{} and a max. sequence number of {}. Try to "
+                                                        "remove some old files.".format(self.__fn_out, self.__fn_out_seq_max))
         # end if
     # end def
 

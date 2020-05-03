@@ -40,7 +40,7 @@ class PcwConstWhiteAccelModelNd(DynMatrix):
 
     def eval_f(self, dt: float = 1.) -> np.ndarray:
         f = np.block([[self.__i, dt * self.__i],
-                      [self.__i, self.__i]])
+                      [self.__o, self.__i]])
 
         return f
     # end dev

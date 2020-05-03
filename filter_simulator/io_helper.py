@@ -2,11 +2,13 @@ from __future__ import annotations
 from typing import List, Optional
 from abc import ABC, abstractmethod
 import os
+import re
 import numpy as np
 import pymap3d as pm
 
 from .common import FrameList, Position, Detection
 from .data_provider_interface import IDataProvider
+from .data_provider_converter import CoordSysConv, EnuToWgs84Converter
 
 
 class InputLineHandler(ABC):
@@ -101,7 +103,7 @@ class FileWriter:
         return files
 
     @staticmethod
-    def get_next_sequence_filename(directory: str, filename_format: str, n_seq_max: int,
+    def get_next_sequence_filename(directory: str, filename_format: str, filename_search_format: Optional[str], n_seq_max: int,
                                    fill_gaps: bool = False) -> Optional[str]:
         existing_files: List[str] = FileWriter.get_files_in_directory(directory)
         fn_ret = None
@@ -115,20 +117,57 @@ class FileWriter:
                     break
             # end for
         else:
-            for n in reversed(range(n_seq_max + 1)):
-                fn_tmp = filename_format.format(n)
+            if filename_search_format is not None:  # Probably more efficient than the version below, especially for many posstible numbers
+                max_val = -1
 
-                if fn_tmp in existing_files:
-                    if n < n_seq_max:
-                        fn_ret = filename_format.format(n + 1)
+                pattern = re.compile(filename_search_format)
 
-                    break
-            # end for
+                for file in existing_files:
+                    if pattern.match(file):
+                        res = pattern.search(file)
+
+                        if res is not None:
+                            val = int(res.group(1))
+
+                            if val > max_val:
+                                max_val = val
+                            # end if
+                        # end if
+                    # end if
+                # end for file
+
+                if max_val < n_seq_max:
+                    fn_ret = filename_format.format(max_val + 1)
+                # end if
+            else:
+                found = False
+                for n in reversed(range(n_seq_max + 1)):
+                    fn_tmp = filename_format.format(n)
+
+                    if fn_tmp in existing_files:
+                        found = True
+
+                        if n < n_seq_max:
+                            fn_ret = filename_format.format(n + 1)
+
+                        break
+                    # end if
+                # end for
+
+                if not found:
+                    fn_ret = filename_format.format(0)
+            # end if
         # end if
 
         return fn_ret
 
-    def write(self, frames: FrameList, observer: Position):
+    def write(self, frames: FrameList, observer: Position, output_coord_system_conversion: CoordSysConv = CoordSysConv.NONE):
+        if output_coord_system_conversion == CoordSysConv.NONE:
+            pass
+        elif output_coord_system_conversion == CoordSysConv.WGS84:
+            frames = EnuToWgs84Converter(frames, observer).frame_list
+        # end if
+
         with open(self.__filename, "w") as file:
             frame_nr: int = 0
 
@@ -136,10 +175,7 @@ class FileWriter:
                 frame_nr += 1
 
                 for detection in frame:
-                    lat, lon, _ = pm.enu2geodetic(np.array(detection.x), np.array(detection.y),
-                                                  np.asarray(0), np.asarray(observer.x),
-                                                  np.asarray(observer.y), np.asarray(0), ell=None, deg=True)
-                    file.write("{} {} {}\n".format(lat, lon, frame_nr))
+                    file.write("{} {} {}\n".format(detection.x, detection.y, frame_nr))
             # end for
         # end with
     # end def

@@ -16,10 +16,11 @@ from filter_simulator.common import Logging, Limits, Position
 from filter_simulator.io_helper import FileReader, InputLineHandlerLatLonIdx
 from filter_simulator.filter_simulator import FilterSimulator, SimStepPartConf
 from filter_simulator.data_provider_interface import IDataProvider
-from filter_simulator.data_provider_converter import Wgs84ToEnuConverter
+from filter_simulator.data_provider_converter import CoordSysConv, Wgs84ToEnuConverter
 from filter_simulator.dyn_matrix import TransitionModel, PcwConstWhiteAccelModelNd
 from gm_phd_filter import GmPhdFilter, GmComponent, Gmm
 from phd_filter_data_provider import PhdFilterDataProvider
+from filter_simulator.window_helper import LimitsMode
 
 
 class DrawLayer(Enum):
@@ -29,7 +30,8 @@ class DrawLayer(Enum):
     GMM_COV_ELL = 3
     GMM_COV_MEAN = 4
     EST_STATE = 5
-    CUR_DET = 6
+    ALL_EST_STATE = 6
+    CUR_DET = 7
 # end class
 
 
@@ -46,21 +48,16 @@ class DataProviderType(Enum):
 # end class
 
 
-class CoordSysConv(Enum):
-    NONE = 0
-    WGS84 = 1
-# end class
-
-
 class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
-    def __init__(self, data_provider: IDataProvider, fn_out: str, limits: Limits, observer: Position, logging: Logging,
+    def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv,
+                 fn_out: str, limits: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
                  birth_gmm: List[GmComponent], p_survival: float, p_detection: float,
                  f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, clutter: float,
                  trunc_thresh: float, merge_thresh: float, max_components: int,
                  ext_states_bias: float, ext_states_use_integral: bool,
                  density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int,
                  draw_layers: Optional[List[DrawLayer]]):
-        FilterSimulator.__init__(self, data_provider, fn_out, limits, observer, logging)
+        FilterSimulator.__init__(self, data_provider, output_coord_system_conversion, fn_out, limits, limits_mode, observer, logging)
         GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, clutter=clutter, logging=logging)
 
         self.__trunc_thresh = trunc_thresh
@@ -74,14 +71,15 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         self.__logging: Logging = logging
         self.__draw_layers: Optional[List[DrawLayer]] = draw_layers if draw_layers is not None else [ly for ly in DrawLayer]
 
+        self.__ext_states: List[List[np.ndarray]] = []
+
     def _set_sim_loop_step_part_conf(self):
         # Configure the processing steps
         sim_step_part_conf = SimStepPartConf()
 
         sim_step_part_conf.add_user_step(self.__sim_loop_predict_and_update)
-        # sim_step_part_conf.add_draw_step()
-        # sim_step_part_conf.add_wait_for_trigger_step()
         sim_step_part_conf.add_user_step(self.__sim_loop_prune)
+        sim_step_part_conf.add_user_step(self.__sim_loop_extract_states)
         sim_step_part_conf.add_draw_step()
         sim_step_part_conf.add_wait_for_trigger_step()
         sim_step_part_conf.add_load_next_frame_step()
@@ -107,6 +105,38 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
             # Prune
             self._prune(trunc_thresh=self.__trunc_thresh, merge_thresh=self.__merge_thresh, max_components=self.__max_components)
         # end if
+    # end def
+
+    def __sim_loop_extract_states(self):
+        if self._step >= 0:
+            # Extract states
+            ext_states = self._extract_states(bias=self.__ext_states_bias, use_integral=self.__ext_states_use_integral)
+            self.__remove_duplikate_states(ext_states)
+            self.__ext_states.append(ext_states)
+        # end if
+    # end def
+
+    @staticmethod
+    def __remove_duplikate_states(states: List[np.ndarray]):
+        for i in range(len(states)):
+            if i >= len(states):
+                break
+            else:
+                loc_a = states[i]
+            # end if
+
+            for k in reversed(range(len(states))):
+                if k <= i:
+                    break
+                else:
+                    loc_b = states[k]
+
+                    if np.array_equal(loc_a, loc_b):
+                        del states[k]
+                    # end if
+                # end if
+            # end for
+        # end for
     # end def
 
     def __calc_density(self, x: np.ndarray, y: np.ndarray) -> float:
@@ -153,7 +183,6 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
     # end def
 
     def _update_window(self) -> None:
-
         for l, ly in enumerate(self.__draw_layers):
             zorder = l
 
@@ -184,7 +213,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
             elif ly == DrawLayer.ALL_DET:
                 # All detections - each frame's detections in a different color
                 for frame in self._frames:
-                    self._ax.scatter([det.x for det in frame], [det.y for det in frame], edgecolor="green", marker="o", zorder=zorder)
+                    self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=10, edgecolor="green", marker="o", zorder=zorder)
                 # end for
 
             elif ly == DrawLayer.ALL_DET_CONN:
@@ -209,9 +238,19 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                 # end if
 
             elif ly == DrawLayer.EST_STATE:
-                # Estimated states
-                est_items = self._extract_states(bias=self.__ext_states_bias, use_integral=self.__ext_states_use_integral)
-                self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=200, c="gray", edgecolor="black", marker="o", zorder=zorder)
+                if self._cur_frame is not None:
+                    # Estimated states
+                    est_items = self.__ext_states[-1]
+                    self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=200, c="gray", edgecolor="black", marker="o", zorder=zorder)
+                # end if
+
+            elif ly == DrawLayer.ALL_EST_STATE:
+                if self._cur_frame is not None:
+                    # Estimated states
+                    est_items = [est_item for est_items in self.__ext_states for est_item in est_items]
+                    # XXX print(est_items)
+                    self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=50, c="red", edgecolor="black", marker="o", zorder=zorder)
+                # end if
 
             elif ly == DrawLayer.CUR_DET:
                 if self._cur_frame is not None:
@@ -223,6 +262,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
             # end if
         # end for
     # end def
+# end class GmPhdFilterSimulator
 
 
 def main(argv: List[str]):
@@ -244,19 +284,24 @@ def main(argv: List[str]):
                "    Example: DensityDrawStyle.DRAW_HEATMAP" + \
                "\n" + \
                "-o, --output=OUTPUT_FILE:\n" \
-               "    Sets the output file to store the manually set coordinates converted to WGS84 to OUTPUT_FILE.\n" + \
+               "    Sets the output file to store the (manually set or simulated) coordinates to OUTPUT_FILE.\n" + \
                "\n" + \
                "-l, --limits=LIMITS:\n" + \
                "    Sets the limits for the canvas to LIMITS. Its format is 'Limits(X_MIN, Y_MIN, X_MAX Y_MAX)'.\n" + \
                "    Example: Limits(-10, -10, 10, 10)\n" + \
                "\n" + \
+               "    --limits_mode=LIMITS_MODE:\n" + \
+               "    Sets the limits mode, which defines how the limits for the plotting window are set initially and while updating the plot. " \
+               "LimitsMode.ALL_DETECTIONS_INIT_ONLY, LimitsMode.ALL_DETECTIONS_FIXED_UPDATE, LimitsMode.ALL_CANVAS_ELEMENTS_DYN_UPDATE, " \
+               "LimitsMode.MANUAL_AREA_INIT_ONLY [Default], LimitsMode.MANUAL_AREA_FIXED_UPDATE\n" + \
+               "\n" + \
                "-v, --verbosity_level=VERBOSITY:\n" \
                "    Sets the programs verbosity level to VERBOSITY. 0 = Silent [Default], >0 = decreasing verbosity: 1 = CRITICAL, 2 = ERROR, 3 = WARNING, 4 = INFO, 5 = DEBUG.\n" \
                "\n" + \
                "-p, --observer_position=OBSERVER_POSITION:\n" \
-               "    Sets the position of the observer in WGS84 to OBSERVER_POSITION. " \
-               "Can be used instead of the center of the detections or in case of only manually creating detections, " \
-               "which needed to be transformed back to WGS84. Its format is 'X_POS;Y_POS'.\n" + \
+               "    Sets the geodetic position of the observer in WGS84 to OBSERVER_POSITION. " \
+               "Can be used instead of the automatically used center of all detections or in case of only manually creating detections, " \
+               "which needed to be transformed back to WGS84. Its format is 'LAT;LON'.\n" + \
                "\n" + \
                "    --birth_gmm=BIRTH_GMM:\n" + \
                "    List ([]) of GmComponent which defines the birth-GMM. Format for a single GmComponent: GmComponent(weight, mean, covariance_matrix).\n" + \
@@ -268,8 +313,15 @@ def main(argv: List[str]):
                "    --p_detection=P_DETECTION:\n" + \
                "    Sets the (sensor's) detection probability for the measurements.\n" + \
                "\n" + \
+               "-v, --transition_model=TRANSITION_MODEL:\n" \
+               "    Sets the transition model. If set to TransitionModel.INDIVIDUAL, the matrices f and q need to be specified. " \
+               "TransitionModel.INDIVIDUAL [Default], TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND (Piecewise Constant Acceleration Model)\n" \
+               "\n" + \
+               "    --delta_t=DELTA_T:\n" + \
+               "    Sets the time betwen two measurements to DELTA_T. Works only with the --transition_model option set to something difeerent than TransitionModel.INDIVIDUAL. Default: 1.0\n" + \
+               "\n" + \
                "    --mat_f=F:\n" + \
-               "    Sets the transition matrix for the PHD.\n" + \
+               "    Sets the transition model matrix for the PHD.\n" + \
                "    Example: np.eye(2)\n" + \
                "\n" + \
                "    --mat_q=Q:\n" + \
@@ -277,7 +329,7 @@ def main(argv: List[str]):
                "    Example: np.eye(2) * 0.\n" + \
                "\n" + \
                "    --mat_h=H:\n" + \
-               "    Sets the measurement model.\n" + \
+               "    Sets the measurement model matrix.\n" + \
                "    Example: np.eye(2)\n" + \
                "\n" + \
                "    --mat_r=R:\n" + \
@@ -306,7 +358,7 @@ def main(argv: List[str]):
                "    Example: 1.\n" + \
                "\n" + \
                "    --ext_states_use_integral:\n" + \
-               "    Defines if the integral approach for extracting the current states should be used.\n" + \
+               "    Defines if the integral approach for extracting the current states should be used. 0 = False, 1 = True.\n" + \
                "\n" + \
                "    --density_draw_style=DENSITY_DRAW_STYLE:\n" + \
                "    Sets the drawing style to visualizing the density/intensity map. Possible values are: DensityDrawStyle.KDE (kernel density estimator), " \
@@ -333,8 +385,13 @@ def main(argv: List[str]):
                "-i, --input=INPUT_FILE:\n" + \
                "    Parse detections with coordinates from INPUT_FILE.\n" + \
                "\n" + \
-               "    --coord_system_conversion=COORD_SYSTEM_CONVERSION:\n" + \
-               "    Defines the conversion of the parsed coordinates into another coordinate system.\n" + \
+               "    --input_coord_system_conversion=INPUT_COORD_SYSTEM_CONVERSION:\n" + \
+               "    Defines the coordinates-conversion of the provided values from the INPUT_COORD_SYSTEM_CONVERSION into the internal system (ENU). " \
+               "Possible values are class CoordSysConv.NONE [Default], CoordSysConv.WGS84\n" + \
+               "\n" + \
+               "    --output_coord_system_conversion=OUTPUT_COORD_SYSTEM_CONVERSION:\n" + \
+               "    Defines the coordinates-conversion of the internal system (ENU) to the OUTPUT_COORD_SYSTEM_CONVERSION for storing the values. " \
+               "Possible values are class CoordSysConv.NONE [Default], CoordSysConv.WGS84\n" + \
                "\n" + \
                "\n" + \
                "SIMULATOR\n" + \
@@ -349,12 +406,13 @@ def main(argv: List[str]):
                "    * SIMULATION [Default]\n" \
                "    * MANUAL_EDITING\n" \
                "\n" + \
-               "    To switch between these two modes, one needs to click (at least) three times with the LEFT mouse button while holding the CTRL and SHIFT buttons pressed without interruption. " \
+               "    To switch between these two modes, one needs to click (at least) three times with the LEFT mouse button while holding the CTRL + SHIFT buttons pressed without interruption. " \
                "Release the keyboard buttons to complete the mode switch.\n" \
                "\n" + \
                "    SIMULATION mode\n" \
                "        In the SIMULATION mode there are following commands:\n" + \
                "        * CTRL + RIGHT CLICK: Navigate forwards (load measurement data of the next time step).\n" + \
+               "        * CTRL + SHIFT + RIGHT CLICK: Stores the current detections (either created manually or by simulation) to the specified output file.\n" + \
                "\n" + \
                "    MANUAL_EDITING mode\n" \
                "        In the MANUAL_EDITING mode there are following commands:\n" + \
@@ -362,28 +420,34 @@ def main(argv: List[str]):
                "        * SHIFT + LEFT CLICK: Add frame.\n" + \
                "        * CTRL + RIGHT CLICK: Remove last set point.\n" + \
                "        * SHIFT + RIGHT CLICK: Remove last frame.\n" + \
+               "        * CTRL + SHIFT + RIGHT CLICK: Stores the current detections (either created manually or by simulation) to the specified output file.\n" + \
                "\n" + \
                ""
     # end def
 
     data_provider_type: DataProviderType = DataProviderType.FILE_READER
 
-    outputfile: str = "out.lst"
+    output_file: str = "out.lst"
+    fn_out_seq_max = 9999  # XXX param
+    fn_out_fill_gaps = False  # XXX param
     limits: Limits = Limits(-10, -10, 10, 10)
+    limits_mode: LimitsMode = LimitsMode.MANUAL_AREA_INIT_ONLY
     verbosity: Logging = Logging.INFO
     observer: Optional[Position] = None
 
     birth_gmm: Gmm = Gmm([GmComponent(0.1, [0, 0], np.eye(2) * 10. ** 2)])
     p_survival: float = 0.9
     p_detection: float = 0.9
-    model = TransitionModel.INDIVIDUAL  # XXX in parameter aufnehmen
-    dt = 1.  # XXX auch als param aufnehmen
+    transition_model = TransitionModel.INDIVIDUAL
+    dt = 1.
     f: np.ndarray = np.eye(2)
     q: np.ndarray = np.eye(2) * 0.
     h: np.ndarray = np.eye(2)
     r: np.ndarray = np.eye(2) * .1
-    sigma_vel_x = .5  # XXX in parameter aufnehmen
-    sigma_vel_y = .5  # XXX in parameter aufnehmen
+    sigma_vel_x = .2  # XXX in parameter aufnehmen
+    sigma_vel_y = .2  # XXX in parameter aufnehmen
+    sigma_q_x = .4  # XXX in parameter aufnehmen
+    sigma_q_y = .3  # XXX in parameter aufnehmen
     clutter: float = 2e-6
     trunc_thresh: float = 1e-6
     merge_thresh: float = 0.01
@@ -395,20 +459,21 @@ def main(argv: List[str]):
     n_bins_density_map: int = 100
     draw_layers: Optional[List[DrawLayer]] = None
 
-    inputfile: str = ""
-    coord_system_conversion: CoordSysConv = CoordSysConv.NONE
+    input_file: str = ""
+    input_coord_system_conversion: CoordSysConv = CoordSysConv.NONE
+    output_coord_system_conversion: CoordSysConv = CoordSysConv.NONE
 
     try:
-        opts, args = getopt.getopt(argv[1:], "hi:l:o:p:v:", ["help", "data_provider=", "limits=", "output=", "observer_position=", "verbosity_level=",
-                                                             "birth_gmm=", "p_survival=", "p_detection=", "mat_f=", "mat_q=", "mat_h=", "mat_r=", "clutter=",
+        opts, args = getopt.getopt(argv[1:], "hi:l:o:p:v:", ["help", "data_provider=", "limits=", "limits_mode=", "output=", "observer_position=", "verbosity_level=",
+                                                             "birth_gmm=", "p_survival=", "p_detection=", "transition_model=", "delta_t=", "mat_f=", "mat_q=", "mat_h=", "mat_r=", "clutter=",
                                                              "trunc_thresh=", "merge_thresh=", "max_components=",
-                                                             "ext_states_bias=", "ext_states_use_integral", "density_draw_style=", "n_samples_density_map=", "n_bins_density_map=", "draw_layers=",
-                                                             "input=", "coord_system_conversion="])
+                                                             "ext_states_bias=", "ext_states_use_integral=", "density_draw_style=", "n_samples_density_map=", "n_bins_density_map=", "draw_layers=",
+                                                             "input=", "input_coord_system_conversion=", "output_coord_system_conversion="])
 
     except getopt.GetoptError as e:
         print("Reading parameters caused error {}".format(e))
         print(usage())
-        sys.exit(2)
+        sys.exit(1)
     # end try
 
     for opt, arg in opts:
@@ -431,12 +496,29 @@ def main(argv: List[str]):
             # end if
 
         elif opt in ("-l", "--limits"):
-            fields: List[str] = arg.split(";")
-            if len(fields) == 4:
-                limits = Limits(float(fields[0]), float(fields[1]), float(fields[2]), float(fields[3]))
+            try:
+                limits = eval(arg)
+            except Exception as e:
+                err_msg = str(e)
+            # end try
+
+            if not isinstance(limits, Limits):
+                err = True
+            # end if
+
+        elif opt == "--limits_mode":
+            try:
+                limits_mode = eval(arg)
+            except Exception as e:
+                err_msg = str(e)
+            # end try
+
+            if not isinstance(limits_mode, LimitsMode):
+                err = True
+            # end if
 
         elif opt == ("-o", "--output"):
-            outputfile = arg
+            output_file = arg
 
         elif opt in ("-p", "--observer_position"):
             fields: List[str] = arg.split(";")
@@ -469,6 +551,20 @@ def main(argv: List[str]):
 
         elif opt == "--p_detection":
             p_detection = float(arg)
+
+        elif opt == "--transition_model":
+            try:
+                transition_model = eval(arg)
+            except Exception as e:
+                err_msg = str(e)
+            # end try
+
+            if not isinstance(transition_model, TransitionModel):
+                err = True
+            # end if
+
+        elif opt == "--delta_t":
+            dt = float(arg)
 
         elif opt == "--mat_f":
             try:
@@ -530,7 +626,7 @@ def main(argv: List[str]):
             ext_states_bias = float(arg)
 
         elif opt == "--ext_states_use_integral":
-            ext_states_use_integral = True
+            ext_states_use_integral = bool(int(arg))
 
         elif opt == "--density_draw_style":
             try:
@@ -566,16 +662,28 @@ def main(argv: List[str]):
             # end if
 
         elif opt == "--input":
-            inputfile = arg
+            input_file = arg
 
-        elif opt == "--coord_system_conversion":
+        elif opt == "--input_coord_system_conversion":
             try:
-                coord_system_conversion = eval(arg)
+                input_coord_system_conversion = eval(arg)
             except Exception as e:
                 err_msg = str(e)
             # end try
 
-            if not isinstance(coord_system_conversion, CoordSysConv):
+            if not isinstance(input_coord_system_conversion, CoordSysConv):
+                err = True
+            # end if
+        # end if
+
+        elif opt == "--output_coord_system_conversion":
+            try:
+                output_coord_system_conversion = eval(arg)
+            except Exception as e:
+                err_msg = str(e)
+            # end try
+
+            if not isinstance(output_coord_system_conversion, CoordSysConv):
                 err = True
             # end if
         # end if
@@ -590,12 +698,10 @@ def main(argv: List[str]):
         # end if
     # end for
 
-    # Evaluate dynamic matrices
-    model = TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND  # XXX
 
-    if model == TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND:
-        dt = 1.0
-        m = PcwConstWhiteAccelModelNd(dim=2, sigma=(0.4, 0.3))  # XXX
+    # Evaluate dynamic matrices
+    if transition_model == TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND:
+        m = PcwConstWhiteAccelModelNd(dim=2, sigma=(sigma_q_x, sigma_q_y))
 
         f = m.eval_f(dt)
         q = m.eval_q(dt)
@@ -604,27 +710,30 @@ def main(argv: List[str]):
     # Get data from a data provider
     if data_provider_type == DataProviderType.FILE_READER:
         # Read all measurements from file
-        file_reader: FileReader = FileReader(inputfile)
+        file_reader: FileReader = FileReader(input_file)
         line_handler: InputLineHandlerLatLonIdx = InputLineHandlerLatLonIdx()
         file_reader.read(line_handler)
-        data_provider = file_reader
+        data_provider = line_handler
 
     else:  # data_provider_type == DataProviderType.SIMULATOR
         # XXX replace fixed paraemter values
-        data_provider = PhdFilterDataProvider(f=f, q=q, dt=dt, t_max=50, n_birth=1, var_birth=1, n_fa=10, var_fa=10, limits=limits, p_survival=p_survival, p_detection=p_detection, sigma_vel_x=sigma_vel_x, sigma_vel_y=sigma_vel_y)
+        data_provider = PhdFilterDataProvider(f=f, q=q, dt=dt, t_max=50, n_birth=1, var_birth=1, n_fa=clutter, var_fa=clutter, limits=limits, p_survival=p_survival, p_detection=p_detection, sigma_vel_x=sigma_vel_x, sigma_vel_y=sigma_vel_y)
     # end if
 
     # Convert data from certain coordinate systems to ENU, which is used internally
-    if coord_system_conversion == CoordSysConv.WGS84:
+    if input_coord_system_conversion == CoordSysConv.WGS84:
         data_provider = Wgs84ToEnuConverter(data_provider.frame_list, observer)
     # end if
-    sim: GmPhdFilterSimulator = GmPhdFilterSimulator(data_provider=data_provider, fn_out=outputfile, limits=limits, observer=observer, logging=verbosity,
+    sim: GmPhdFilterSimulator = GmPhdFilterSimulator(data_provider=data_provider, output_coord_system_conversion=output_coord_system_conversion, fn_out=output_file, limits=limits, limits_mode=limits_mode, observer=observer, logging=verbosity,
                                                      birth_gmm=birth_gmm, p_survival=p_survival, p_detection=p_detection,
                                                      f=f, q=q, h=h, r=r, clutter=clutter,
                                                      trunc_thresh=trunc_thresh, merge_thresh=merge_thresh, max_components=max_components,
                                                      ext_states_bias=ext_states_bias, ext_states_use_integral=ext_states_use_integral,
                                                      density_draw_style=density_draw_style, n_samples_density_map=n_samples_density_map, n_bins_density_map=n_bins_density_map,
                                                      draw_layers=draw_layers)
+
+    sim.fn_out_seq_max = fn_out_seq_max
+    sim.fn_out_fill_gaps = fn_out_fill_gaps
 
     sim.run()
 
