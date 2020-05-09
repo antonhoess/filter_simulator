@@ -30,8 +30,15 @@ class WindowModeChecker:
 
     @staticmethod
     def key_is_ctrl_shift(key) -> bool:
-        # shift+control or ctrl+shift
-        if key is not None and "shift" in key and ("control" in key or "ctrl" in key):
+        if key is not None and "shift" in key and "alt" not in key and ("control" in key or "ctrl" in key):
+            return True
+        else:
+            return False
+    # end def
+
+    @staticmethod
+    def key_is_ctrl_alt_shift(key) -> bool:
+        if key is not None and "shift" in key and "alt" in key and ("control" in key or "ctrl" in key):
             return True
         else:
             return False

@@ -71,11 +71,12 @@ class SimStepPartConf:
 
 
 class FilterSimulator(ABC):
-    def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv, fn_out: str,
+    def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv, fn_out: str, fn_out_video: Optional[str],
                  limits: Limits, limits_mode: LimitsMode, observer: Optional[Position], logging: Logging) -> None:
         self.__data_provider = data_provider
         self.__output_coord_system_conversion: CoordSysConv = output_coord_system_conversion
         self.__fn_out: str = fn_out
+        self.__fn_out_video: str = fn_out_video
         self.__step: int = -1
         self.__next_part_step: bool = False
         self.__frames: FrameList = FrameList()
@@ -98,6 +99,10 @@ class FilterSimulator(ABC):
         self.__sim_step_part_conf = self._set_sim_loop_step_part_conf()
         self.__fn_out_seq_max: int = 9999
         self.__fn_out_fill_gaps = False
+
+        self.__anim = None
+        self.__movie_writer = None
+        self.__n_video_frames = 0
 
     @property
     def fn_out_seq_max(self) -> int:
@@ -182,10 +187,22 @@ class FilterSimulator(ABC):
         fig.canvas.mpl_connect("key_release_event", self.__cb_key_release_event)
 
         # Cyclic update check (but only draws, if there's something new)
-        _anim: matplotlib.animation.Animation = animation.FuncAnimation(fig, self.__update_window_wrap, interval=100)
+        self.__anim: matplotlib.animation.Animation = animation.FuncAnimation(fig, self.__update_window_wrap, interval=100)
+
+        if self.__fn_out_video:
+            self.__fn_out_video = self.get_video_filename()
+
+            if self.__fn_out_video:
+                self.__movie_writer = matplotlib.animation.FFMpegWriter(codec="h264", fps=1, extra_args=["-r", "25", "-f", "mp4"])  # Set output frame rate with using the extra_args
+                self.__movie_writer.setup(fig=fig, outfile=self.__fn_out_video, dpi=100)
+            # end if
+        # end if
 
         # Show blocking window which draws the current state and handles mouse clicks
         plt.show()
+
+        # Store video to disk using the grabbed frames
+        self.write_video_to_file(fn_out_video)
     # end def
 
     def __cb_button_press_event(self, event: matplotlib.backend_bases.MouseEvent):
@@ -227,7 +244,6 @@ class FilterSimulator(ABC):
             # Right mouse button: Navigate forwards / backwards
             #   * Ctrl: Forwards
             #   * Shift: Backwards
-            #   * Ctrl+Shift: Store detections
             if event.button == 3:  # Right click
                 self.__logging.print_verbose(Logging.DEBUG, "Right click")
 
@@ -240,9 +256,6 @@ class FilterSimulator(ABC):
                     # XXX makes no sense: self.simulation_direction = SimulationDirection.BACKWARD
                     # self.next = True
                 # end if
-
-                elif WindowModeChecker.key_is_ctrl_shift(event.key):
-                    self.write_points_to_file(self.__frames, self.__output_coord_system_conversion)
             # end if
 
         elif self.__window_mode_checker.get_current_mode() == WindowMode.MANUAL_EDITING:
@@ -252,7 +265,6 @@ class FilterSimulator(ABC):
             # Right mouse button: Remove
             #   * Ctrl: Remove Points
             #   * Shift: Remove Frame / Track
-            #   * Ctrl+Shift: Store detections
             if event.button == 1:  # Left click
                 if event.key == "control":
                     e: float = event.xdata
@@ -284,15 +296,25 @@ class FilterSimulator(ABC):
 
                 elif event.key == "shift":
                     self.__manual_frames.del_last_frame()
-
-                elif WindowModeChecker.key_is_ctrl_shift(event.key):
-                    self.write_points_to_file(self.__manual_frames, self.__output_coord_system_conversion)
+                    # end if
                 # end if event.key == ...
-
             # end if event.button == ...
 
             self.__refresh.set()
         # end if WindowMode.MANUAL_EDITING:
+
+        # Independent on which mode a mouse button was clicked
+        # Right mouse button:
+        #   * Ctrl+Shift: Store detections
+        #   * Ctrl+Alt+Shift: Store video
+        if event.button == 3:  # Right click
+            if WindowModeChecker.key_is_ctrl_shift(event.key):
+                self.write_points_to_file(self.__frames, self.__output_coord_system_conversion)
+
+            elif WindowModeChecker.key_is_ctrl_alt_shift(event.key):
+                self.write_video_to_file(self.__fn_out_video)
+
+        # end if
     # end def
 
     def write_points_to_file(self, frames: FrameList, output_coord_system_conversion: CoordSysConv = CoordSysConv.NONE):
@@ -315,6 +337,30 @@ class FilterSimulator(ABC):
             self.__logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename "
                                                         "{} and a max. sequence number of {}. Try to "
                                                         "remove some old files.".format(self.__fn_out, self.__fn_out_seq_max))
+        # end if
+    # end def
+
+    def get_video_filename(self) -> str:
+        len_n_seq_max = len(str(self.__fn_out_seq_max))
+        filename_format = f"{self.__fn_out_video}_{{:0{len_n_seq_max}d}}"
+        filename_search_format = f"^{re.escape(self.__fn_out_video)}_(\d{{{len_n_seq_max}}})$"
+
+        fn_out = FileWriter.get_next_sequence_filename(".", filename_format=filename_format, filename_search_format=filename_search_format,
+                                                       n_seq_max=self.__fn_out_seq_max, fill_gaps=self.__fn_out_fill_gaps)
+
+        return fn_out
+    # end def
+
+    def write_video_to_file(self, fn_out_video: str):
+        if self.__movie_writer:
+            if fn_out_video:
+                self.__logging.print_verbose(Logging.INFO, "Write video ({} frames) to file {}". format(self.__n_video_frames, fn_out_video))
+                self.__movie_writer.finish()
+                self.__movie_writer = None  # Prevent exception, since it cannot get used anymore
+            else:
+                self.__logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename {} and a max. sequence number of {}. Try to "
+                                                            "remove some old files.".format(self.__fn_out_video, self.__fn_out_seq_max))
+            # end if
         # end if
     # end def
 
@@ -447,6 +493,11 @@ class FilterSimulator(ABC):
 
         self._ax.set_xlabel('east [m]')
         self._ax.set_ylabel('north [m]')
+
+        if self.__movie_writer:
+            self.__movie_writer.grab_frame()
+            self.__n_video_frames += 1
+        # end if
 
         self.__refresh_finished.set()
     # end def

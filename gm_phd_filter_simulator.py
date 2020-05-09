@@ -50,14 +50,14 @@ class DataProviderType(Enum):
 
 class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
     def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv,
-                 fn_out: str, limits: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
+                 fn_out: str, fn_out_video: Optional[str], limits: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
                  birth_gmm: List[GmComponent], p_survival: float, p_detection: float,
                  f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, clutter: float,
                  trunc_thresh: float, merge_thresh: float, max_components: int,
                  ext_states_bias: float, ext_states_use_integral: bool,
                  density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int,
                  draw_layers: Optional[List[DrawLayer]]):
-        FilterSimulator.__init__(self, data_provider, output_coord_system_conversion, fn_out, limits, limits_mode, observer, logging)
+        FilterSimulator.__init__(self, data_provider, output_coord_system_conversion, fn_out, fn_out_video, limits, limits_mode, observer, logging)
         GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, clutter=clutter, logging=logging)
 
         self.__trunc_thresh = trunc_thresh
@@ -261,19 +261,25 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
             # end if
         # end for
     # end def
+
+    def _cb_keyboard(self, cmd: str) -> None:
+        if cmd == "":
+            self._next_part_step = True
+
+        elif cmd == "h":
+            print(GmPhdFilterSimulatorParam.usage())
+
+        else:
+            pass
+        # end if
+    # end def
 # end class GmPhdFilterSimulator
 
 
-def main(argv: List[str]):
-    # Library settings
-    sns.set(color_codes=True)
-
-    # Initialize random generator
-    random.seed(datetime.now())
-
-    # Read command line arguments
+class GmPhdFilterSimulatorParam:
+    @staticmethod
     def usage() -> str:
-        return "{} <PARAMETERS>\n".format(os.path.basename(argv[0])) + \
+        return "{} <PARAMETERS>\n".format(os.path.basename(__file__)) + \
                "\n" + \
                "-h, --help: Prints this help.\n" + \
                "\n" + \
@@ -431,6 +437,9 @@ def main(argv: List[str]):
                "    Defines the coordinates-conversion of the internal system (ENU) to the OUTPUT_COORD_SYSTEM_CONVERSION for storing the values. " \
                "Possible values are class CoordSysConv.NONE [Default], CoordSysConv.WGS84\n" + \
                "\n" + \
+               "    --output_video=OUTPUT_VIDEO:\n" \
+               "    Sets the output file name to store the video captures from the single frames of the plotting window. Default: Not storing any video.\n" + \
+               "\n" + \
                "\n" + \
                "GUI\n" + \
                "    Mouse and keyboard events on the plotting window (GUI).\n" \
@@ -445,7 +454,8 @@ def main(argv: List[str]):
                "    SIMULATION mode\n" \
                "        In the SIMULATION mode there are following commands:\n" + \
                "        * CTRL + RIGHT CLICK: Navigate forwards (load measurement data of the next time step).\n" + \
-               "        * CTRL + SHIFT + RIGHT CLICK: Stores the current detections (either created manually or by simulation) to the specified output file.\n" + \
+               "        * CTRL + SHIFT + RIGHT CLICK: Stores the current detections (either created manually or by simulation) to the specified output file." \
+               "        * CTRL + ALT + SHIFT + RIGHT CLICK: Stores the plot window frames as video, if its filename got specified." \
                "\n" + \
                "    MANUAL_EDITING mode\n" \
                "        In the MANUAL_EDITING mode there are following commands:\n" + \
@@ -453,354 +463,377 @@ def main(argv: List[str]):
                "        * SHIFT + LEFT CLICK: Add frame.\n" + \
                "        * CTRL + RIGHT CLICK: Remove last set point.\n" + \
                "        * SHIFT + RIGHT CLICK: Remove last frame.\n" + \
-               "        * CTRL + SHIFT + RIGHT CLICK: Stores the current detections (either created manually or by simulation) to the specified output file.\n" + \
+               "        * CTRL + SHIFT + RIGHT CLICK: Stores the current detections (either created manually or by simulation) to the specified output file." \
+               "        * CTRL + ALT + SHIFT + RIGHT CLICK: Stores the plot window frames as video, if its filename got specified." \
                "\n" + \
                ""
     # end def
 
-    data_provider_type: DataProviderType = DataProviderType.FILE_READER
+    def run(self, argv: List[str]):
+        # Library settings
+        sns.set(color_codes=True)
 
-    sim_t_max = 50
-    limits: Limits = Limits(-10, -10, 10, 10)
-    limits_mode: LimitsMode = LimitsMode.MANUAL_AREA_INIT_ONLY
-    verbosity: Logging = Logging.INFO
-    observer: Optional[Position] = None
+        # Initialize random generator
+        random.seed(datetime.now())
 
-    birth_gmm: Gmm = Gmm([GmComponent(0.1, [0, 0], np.eye(2) * 10. ** 2)])
-    n_birth: int = 1
-    var_birth: int = 1
-    p_survival: float = 0.9
-    p_detection: float = 0.9
-    transition_model = TransitionModel.INDIVIDUAL
-    dt = 1.
-    f: np.ndarray = np.eye(2)
-    q: np.ndarray = np.eye(2) * 0.
-    h: np.ndarray = np.eye(2)
-    r: np.ndarray = np.eye(2) * .1
-    sigma_vel_x = .2
-    sigma_vel_y = .2
-    sigma_accel_x = .1
-    sigma_accel_y = .1
-    clutter: float = 2e-6
-    trunc_thresh: float = 1e-6
-    merge_thresh: float = 0.01
-    max_components: int = 10
-    ext_states_bias: float = 1.
-    ext_states_use_integral: bool = False
-    density_draw_style: DensityDrawStyle = DensityDrawStyle.HEATMAP
-    n_samples_density_map: int = 10000
-    n_bins_density_map: int = 100
-    draw_layers: Optional[List[DrawLayer]] = None
+        # Read command line arguments
+        data_provider_type: DataProviderType = DataProviderType.FILE_READER
 
-    input_file: str = ""
-    input_coord_system_conversion: CoordSysConv = CoordSysConv.NONE
+        sim_t_max = 50
+        limits: Limits = Limits(-10, -10, 10, 10)
+        limits_mode: LimitsMode = LimitsMode.MANUAL_AREA_INIT_ONLY
+        verbosity: Logging = Logging.INFO
+        observer: Optional[Position] = None
 
-    output: str = "out.lst"
-    output_seq_max = 9999
-    output_fill_gaps = False
-    output_coord_system_conversion: CoordSysConv = CoordSysConv.NONE
+        birth_gmm: Gmm = Gmm([GmComponent(0.1, [0, 0], np.eye(2) * 10. ** 2)])
+        n_birth: int = 1
+        var_birth: int = 1
+        p_survival: float = 0.9
+        p_detection: float = 0.9
+        transition_model = TransitionModel.INDIVIDUAL
+        dt = 1.
+        f: np.ndarray = np.eye(2)
+        q: np.ndarray = np.eye(2) * 0.
+        h: np.ndarray = np.eye(2)
+        r: np.ndarray = np.eye(2) * .1
+        sigma_vel_x = .2
+        sigma_vel_y = .2
+        sigma_accel_x = .1
+        sigma_accel_y = .1
+        clutter: float = 2e-6
+        trunc_thresh: float = 1e-6
+        merge_thresh: float = 0.01
+        max_components: int = 10
+        ext_states_bias: float = 1.
+        ext_states_use_integral: bool = False
+        density_draw_style: DensityDrawStyle = DensityDrawStyle.HEATMAP
+        n_samples_density_map: int = 10000
+        n_bins_density_map: int = 100
+        draw_layers: Optional[List[DrawLayer]] = None
 
-    try:
-        opts, args = getopt.getopt(argv[1:], "hi:l:o:p:v:", ["help", "data_provider=", "sim_t_max=", "limits=", "limits_mode=", "observer_position=", "verbosity_level=",
-                                                             "birth_gmm=", "n_birth=", "var_birth=", "p_survival=", "p_detection=", "transition_model=", "delta_t=",
-                                                             "mat_f=", "mat_q=", "mat_h=", "mat_r=", "sigma_vel_x=", "sigma_vel_y=", "sigma_accel_x=", "sigma_accel_y=", "clutter=",
-                                                             "trunc_thresh=", "merge_thresh=", "max_components=",
-                                                             "ext_states_bias=", "ext_states_use_integral=", "density_draw_style=", "n_samples_density_map=", "n_bins_density_map=", "draw_layers=",
-                                                             "input=", "input_coord_system_conversion=", "output=", "output_seq_max=", "output_fill_gaps=", "output_coord_system_conversion="])
+        input_file: str = ""
+        input_coord_system_conversion: CoordSysConv = CoordSysConv.NONE
 
-    except getopt.GetoptError as e:
-        print("Reading parameters caused error {}".format(e))
-        print(usage())
-        sys.exit(1)
-    # end try
+        output: str = "out.lst"
+        output_seq_max = 9999
+        output_fill_gaps = False
+        output_coord_system_conversion: CoordSysConv = CoordSysConv.NONE
+        output_video: Optional[str] = None
 
-    for opt, arg in opts:
-        err: bool = False
-        err_msg: Optional[str] = None
+        try:
+            opts, args = getopt.getopt(argv[1:], "hi:l:o:p:v:", ["help", "data_provider=", "sim_t_max=", "limits=", "limits_mode=", "observer_position=", "verbosity_level=",
+                                                                 "birth_gmm=", "n_birth=", "var_birth=", "p_survival=", "p_detection=", "transition_model=", "delta_t=",
+                                                                 "mat_f=", "mat_q=", "mat_h=", "mat_r=", "sigma_vel_x=", "sigma_vel_y=", "sigma_accel_x=", "sigma_accel_y=", "clutter=",
+                                                                 "trunc_thresh=", "merge_thresh=", "max_components=",
+                                                                 "ext_states_bias=", "ext_states_use_integral=", "density_draw_style=", "n_samples_density_map=", "n_bins_density_map=", "draw_layers=",
+                                                                 "input=", "input_coord_system_conversion=", "output=", "output_seq_max=", "output_fill_gaps=", "output_coord_system_conversion=",
+                                                                 "output_video="])
 
-        if opt in ("-h", "--help"):
-            print(usage())
-            sys.exit()
+        except getopt.GetoptError as e:
+            print("Reading parameters caused error {}".format(e))
+            print(self.usage())
+            sys.exit(1)
+        # end try
 
-        elif opt == "--data_provider":
-            try:
-                data_provider_type = eval(arg)
-            except Exception as e:
-                err_msg = str(e)
-            # end try
+        for opt, arg in opts:
+            err: bool = False
+            err_msg: Optional[str] = None
 
-            if not isinstance(data_provider_type, DataProviderType):
-                err = True
+            if opt in ("-h", "--help"):
+                print(self.usage())
+                sys.exit()
+
+            elif opt == "--data_provider":
+                try:
+                    data_provider_type = eval(arg)
+                except Exception as e:
+                    err_msg = str(e)
+                # end try
+
+                if not isinstance(data_provider_type, DataProviderType):
+                    err = True
+                # end if
+
+            elif opt == "--sim_t_max":
+                sim_t_max = int(arg)
+
+            elif opt in ("-l", "--limits"):
+                try:
+                    limits = eval(arg)
+                except Exception as e:
+                    err_msg = str(e)
+                # end try
+
+                if not isinstance(limits, Limits):
+                    err = True
+                # end if
+
+            elif opt == "--limits_mode":
+                try:
+                    limits_mode = eval(arg)
+                except Exception as e:
+                    err_msg = str(e)
+                # end try
+
+                if not isinstance(limits_mode, LimitsMode):
+                    err = True
+                # end if
+
+            elif opt in ("-p", "--observer_position"):
+                fields: List[str] = arg.split(";")
+                if len(fields) >= 2:
+                    observer = Position(float(fields[0]), float(fields[1]))
+
+            elif opt in ("-v", "--verbosity_level"):
+                verbosity = Logging(int(arg))
+
+            elif opt == "--birth_gmm":
+                try:
+                    birth_gmm = eval(arg)
+                except Exception as e:
+                    err_msg = str(e)
+                # end try
+
+                if isinstance(birth_gmm, list):
+                    for comp in birth_gmm:
+                        if not isinstance(comp, GmComponent):
+                            err = True
+                            break
+                        # end if
+                    # end for
+                else:
+                    err = True
+                # end if
+
+            elif opt == "--n_birth":
+                n_birth = int(arg)
+
+            elif opt == "--var_birth":
+                var_birth = int(arg)
+
+            elif opt == "--p_survival":
+                p_survival = float(arg)
+
+            elif opt == "--p_detection":
+                p_detection = float(arg)
+
+            elif opt == "--transition_model":
+                try:
+                    transition_model = eval(arg)
+                except Exception as e:
+                    err_msg = str(e)
+                # end try
+
+                if not isinstance(transition_model, TransitionModel):
+                    err = True
+                # end if
+
+            elif opt == "--delta_t":
+                dt = float(arg)
+
+            elif opt == "--mat_f":
+                try:
+                    f = eval(arg)
+                except Exception as e:
+                    err_msg = str(e)
+                # end try
+
+                if not isinstance(f, np.ndarray):
+                    err = True
+                # end if
+
+            elif opt == "--mat_q":
+                try:
+                    q = eval(arg)
+                except Exception as e:
+                    err_msg = str(e)
+                # end try
+
+                if not isinstance(q, np.ndarray):
+                    err = True
+                # end if
+
+            elif opt == "--mat_h":
+                try:
+                    h = eval(arg)
+                except Exception as e:
+                    err_msg = str(e)
+                # end try
+
+                if not isinstance(h, np.ndarray):
+                    err = True
+                # end if
+
+            elif opt == "--mat_r":
+                try:
+                    r = eval(arg)
+                except Exception as e:
+                    err_msg = str(e)
+                # end try
+
+                if not isinstance(r, np.ndarray):
+                    err = True
+                # end if
+
+            elif opt == "--sigma_vel_x":
+                sigma_vel_x = float(arg)
+
+            elif opt == "--sigma_vel_y":
+                sigma_vel_y = float(arg)
+
+            elif opt == "--sigma_accel_x":
+                sigma_accel_x = float(arg)
+
+            elif opt == "--sigma_accel_y":
+                sigma_accel_y = float(arg)
+
+            elif opt == "--clutter":
+                clutter = float(arg)
+
+            elif opt == "--trunc_thresh":
+                trunc_thresh = float(arg)
+
+            elif opt == "--merge_thresh":
+                merge_thresh = float(arg)
+
+            elif opt == "--max_components":
+                max_components = int(arg)
+
+            elif opt == "--ext_states_bias":
+                ext_states_bias = float(arg)
+
+            elif opt == "--ext_states_use_integral":
+                ext_states_use_integral = bool(int(arg))
+
+            elif opt == "--density_draw_style":
+                try:
+                    density_draw_style = eval(arg)
+                except Exception as e:
+                    err_msg = str(e)
+                # end try
+
+                if not isinstance(density_draw_style, DensityDrawStyle):
+                    err = True
+                # end if
+
+            elif opt == "--n_samples_density_map":
+                n_samples_density_map = int(arg)
+
+            elif opt == "--n_bins_density_map":
+                n_bins_density_map = int(arg)
+
+            elif opt == "--draw_layers":
+                try:
+                    draw_layers = eval(arg)
+                except Exception as e:
+                    err_msg = str(e)
+                # end try
+
+                if isinstance(draw_layers, list):
+                    for layer in draw_layers:
+                        if not isinstance(layer, DrawLayer):
+                            err = True
+                            break
+                        # end if
+                    # end for
+                # end if
+
+            elif opt == "--input":
+                input_file = arg
+
+            elif opt == "--input_coord_system_conversion":
+                try:
+                    input_coord_system_conversion = eval(arg)
+                except Exception as e:
+                    err_msg = str(e)
+                # end try
+
+                if not isinstance(input_coord_system_conversion, CoordSysConv):
+                    err = True
+                # end if
             # end if
 
-        elif opt == "--sim_t_max":
-            sim_t_max = int(arg)
+            elif opt in ("-o", "--output"):
+                output = arg
 
-        elif opt in ("-l", "--limits"):
-            try:
-                limits = eval(arg)
-            except Exception as e:
-                err_msg = str(e)
-            # end try
+            elif opt == "--output_seq_max":
+                output_seq_max = int(arg)
 
-            if not isinstance(limits, Limits):
-                err = True
+            elif opt == "--output_fill_gaps":
+                output_fill_gaps = bool(arg)
+
+            elif opt == "--output_coord_system_conversion":
+                try:
+                    output_coord_system_conversion = eval(arg)
+                except Exception as e:
+                    err_msg = str(e)
+                # end try
+
+                if not isinstance(output_coord_system_conversion, CoordSysConv):
+                    err = True
+                # end if
             # end if
 
-        elif opt == "--limits_mode":
-            try:
-                limits_mode = eval(arg)
-            except Exception as e:
-                err_msg = str(e)
-            # end try
+            elif opt == "--output_video":
+                output_video = arg
 
-            if not isinstance(limits_mode, LimitsMode):
-                err = True
+            if err or err_msg:
+                print(f"Reading parameter \'{opt}\' caused an error. Argument not provided in correct format.")
+
+                if err_msg is not None:
+                    print(f"Evaluation error: {err_msg}.")
+                # end if
+                sys.exit(2)
             # end if
+        # end for
 
-        elif opt in ("-p", "--observer_position"):
-            fields: List[str] = arg.split(";")
-            if len(fields) >= 2:
-                observer = Position(float(fields[0]), float(fields[1]))
+        # Evaluate dynamic matrices
+        if transition_model == TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND:
+            m = PcwConstWhiteAccelModelNd(dim=2, sigma=(sigma_accel_x, sigma_accel_y))
 
-        elif opt in ("-v", "--verbosity_level"):
-            verbosity = Logging(int(arg))
-
-        elif opt == "--birth_gmm":
-            try:
-                birth_gmm = eval(arg)
-            except Exception as e:
-                err_msg = str(e)
-            # end try
-
-            if isinstance(birth_gmm, list):
-                for comp in birth_gmm:
-                    if not isinstance(comp, GmComponent):
-                        err = True
-                        break
-                    # end if
-                # end for
-            else:
-                err = True
-            # end if
-
-        elif opt == "--n_birth":
-            n_birth = int(arg)
-
-        elif opt == "--var_birth":
-            var_birth = int(arg)
-
-        elif opt == "--p_survival":
-            p_survival = float(arg)
-
-        elif opt == "--p_detection":
-            p_detection = float(arg)
-
-        elif opt == "--transition_model":
-            try:
-                transition_model = eval(arg)
-            except Exception as e:
-                err_msg = str(e)
-            # end try
-
-            if not isinstance(transition_model, TransitionModel):
-                err = True
-            # end if
-
-        elif opt == "--delta_t":
-            dt = float(arg)
-
-        elif opt == "--mat_f":
-            try:
-                f = eval(arg)
-            except Exception as e:
-                err_msg = str(e)
-            # end try
-
-            if not isinstance(f, np.ndarray):
-                err = True
-            # end if
-
-        elif opt == "--mat_q":
-            try:
-                q = eval(arg)
-            except Exception as e:
-                err_msg = str(e)
-            # end try
-
-            if not isinstance(q, np.ndarray):
-                err = True
-            # end if
-
-        elif opt == "--mat_h":
-            try:
-                h = eval(arg)
-            except Exception as e:
-                err_msg = str(e)
-            # end try
-
-            if not isinstance(h, np.ndarray):
-                err = True
-            # end if
-
-        elif opt == "--mat_r":
-            try:
-                r = eval(arg)
-            except Exception as e:
-                err_msg = str(e)
-            # end try
-
-            if not isinstance(r, np.ndarray):
-                err = True
-            # end if
-
-        elif opt == "--sigma_vel_x":
-            sigma_vel_x = float(arg)
-
-        elif opt == "--sigma_vel_y":
-            sigma_vel_y = float(arg)
-
-        elif opt == "--sigma_accel_x":
-            sigma_accel_x = float(arg)
-
-        elif opt == "--sigma_accel_y":
-            sigma_accel_y = float(arg)
-
-        elif opt == "--clutter":
-            clutter = float(arg)
-
-        elif opt == "--trunc_thresh":
-            trunc_thresh = float(arg)
-
-        elif opt == "--merge_thresh":
-            merge_thresh = float(arg)
-
-        elif opt == "--max_components":
-            max_components = int(arg)
-
-        elif opt == "--ext_states_bias":
-            ext_states_bias = float(arg)
-
-        elif opt == "--ext_states_use_integral":
-            ext_states_use_integral = bool(int(arg))
-
-        elif opt == "--density_draw_style":
-            try:
-                density_draw_style = eval(arg)
-            except Exception as e:
-                err_msg = str(e)
-            # end try
-
-            if not isinstance(density_draw_style, DensityDrawStyle):
-                err = True
-            # end if
-
-        elif opt == "--n_samples_density_map":
-            n_samples_density_map = int(arg)
-
-        elif opt == "--n_bins_density_map":
-            n_bins_density_map = int(arg)
-
-        elif opt == "--draw_layers":
-            try:
-                draw_layers = eval(arg)
-            except Exception as e:
-                err_msg = str(e)
-            # end try
-
-            if isinstance(draw_layers, list):
-                for layer in draw_layers:
-                    if not isinstance(layer, DrawLayer):
-                        err = True
-                        break
-                    # end if
-                # end for
-            # end if
-
-        elif opt == "--input":
-            input_file = arg
-
-        elif opt == "--input_coord_system_conversion":
-            try:
-                input_coord_system_conversion = eval(arg)
-            except Exception as e:
-                err_msg = str(e)
-            # end try
-
-            if not isinstance(input_coord_system_conversion, CoordSysConv):
-                err = True
-            # end if
+            f = m.eval_f(dt)
+            q = m.eval_q(dt)
         # end if
 
-        elif opt == ("-o", "--output"):
-            output = arg
+        # Get data from a data provider
+        if data_provider_type == DataProviderType.FILE_READER:
+            # Read all measurements from file
+            file_reader: FileReader = FileReader(input_file)
+            line_handler: InputLineHandlerLatLonIdx = InputLineHandlerLatLonIdx()
+            file_reader.read(line_handler)
+            data_provider = line_handler
 
-        elif opt == "--output_seq_max":
-            output_seq_max = int(arg)
-
-        elif opt == "--output_fill_gaps":
-            output_fill_gaps = bool(arg)
-
-        elif opt == "--output_coord_system_conversion":
-            try:
-                output_coord_system_conversion = eval(arg)
-            except Exception as e:
-                err_msg = str(e)
-            # end try
-
-            if not isinstance(output_coord_system_conversion, CoordSysConv):
-                err = True
-            # end if
+        else:  # data_provider_type == DataProviderType.SIMULATOR
+            data_provider = PhdFilterDataProvider(f=f, q=q, dt=dt, t_max=sim_t_max, n_birth=n_birth, var_birth=var_birth, n_fa=int(clutter), var_fa=int(clutter), limits=limits,
+                                                  p_survival=p_survival, p_detection=p_detection, sigma_vel_x=sigma_vel_x, sigma_vel_y=sigma_vel_y)
         # end if
 
-        if err or err_msg:
-            print(f"Reading parameter \'{opt}\' caused an error. Argument not provided in correct format.")
-
-            if err_msg is not None:
-                print(f"Evaluation error: {err_msg}.")
-            # end if
-            sys.exit(2)
+        # Convert data from certain coordinate systems to ENU, which is used internally
+        if input_coord_system_conversion == CoordSysConv.WGS84:
+            data_provider = Wgs84ToEnuConverter(data_provider.frame_list, observer)
         # end if
-    # end for
+        sim: GmPhdFilterSimulator = GmPhdFilterSimulator(data_provider=data_provider, output_coord_system_conversion=output_coord_system_conversion, fn_out=output, fn_out_video=output_video,
+                                                         limits=limits, limits_mode=limits_mode, observer=observer, logging=verbosity,
+                                                         birth_gmm=birth_gmm, p_survival=p_survival, p_detection=p_detection,
+                                                         f=f, q=q, h=h, r=r, clutter=clutter,
+                                                         trunc_thresh=trunc_thresh, merge_thresh=merge_thresh, max_components=max_components,
+                                                         ext_states_bias=ext_states_bias, ext_states_use_integral=ext_states_use_integral,
+                                                         density_draw_style=density_draw_style, n_samples_density_map=n_samples_density_map, n_bins_density_map=n_bins_density_map,
+                                                         draw_layers=draw_layers)
 
-    # Evaluate dynamic matrices
-    if transition_model == TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND:
-        m = PcwConstWhiteAccelModelNd(dim=2, sigma=(sigma_accel_x, sigma_accel_y))
+        sim.fn_out_seq_max = output_seq_max
+        sim.fn_out_fill_gaps = output_fill_gaps
 
-        f = m.eval_f(dt)
-        q = m.eval_q(dt)
-    # end if
+        sim.run()
+    # end def
+# end class
 
-    # Get data from a data provider
-    if data_provider_type == DataProviderType.FILE_READER:
-        # Read all measurements from file
-        file_reader: FileReader = FileReader(input_file)
-        line_handler: InputLineHandlerLatLonIdx = InputLineHandlerLatLonIdx()
-        file_reader.read(line_handler)
-        data_provider = line_handler
 
-    else:  # data_provider_type == DataProviderType.SIMULATOR
-        data_provider = PhdFilterDataProvider(f=f, q=q, dt=dt, t_max=sim_t_max, n_birth=n_birth, var_birth=var_birth, n_fa=int(clutter), var_fa=int(clutter), limits=limits,
-                                              p_survival=p_survival, p_detection=p_detection, sigma_vel_x=sigma_vel_x, sigma_vel_y=sigma_vel_y)
-    # end if
+def main(argv: List[str]):
+    sim_param = GmPhdFilterSimulatorParam()
 
-    # Convert data from certain coordinate systems to ENU, which is used internally
-    if input_coord_system_conversion == CoordSysConv.WGS84:
-        data_provider = Wgs84ToEnuConverter(data_provider.frame_list, observer)
-    # end if
-    sim: GmPhdFilterSimulator = GmPhdFilterSimulator(data_provider=data_provider, output_coord_system_conversion=output_coord_system_conversion, fn_out=output,
-                                                     limits=limits, limits_mode=limits_mode, observer=observer, logging=verbosity,
-                                                     birth_gmm=birth_gmm, p_survival=p_survival, p_detection=p_detection,
-                                                     f=f, q=q, h=h, r=r, clutter=clutter,
-                                                     trunc_thresh=trunc_thresh, merge_thresh=merge_thresh, max_components=max_components,
-                                                     ext_states_bias=ext_states_bias, ext_states_use_integral=ext_states_use_integral,
-                                                     density_draw_style=density_draw_style, n_samples_density_map=n_samples_density_map, n_bins_density_map=n_bins_density_map,
-                                                     draw_layers=draw_layers)
-
-    sim.fn_out_seq_max = output_seq_max
-    sim.fn_out_fill_gaps = output_fill_gaps
-
-    sim.run()
+    sim_param.run(argv)
+# end def main
 
 
 if __name__ == "__main__":
