@@ -12,6 +12,7 @@ import matplotlib.backend_bases
 from enum import Enum
 import re
 import datetime
+import copy
 
 from .common import Logging, SimulationDirection, Limits, Position, Detection, FrameList
 from .window_helper import WindowMode, LimitsMode, WindowModeChecker
@@ -72,7 +73,7 @@ class SimStepPartConf:
 
 class FilterSimulator(ABC):
     def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv, fn_out: str, fn_out_video: Optional[str], auto_step_interval: int,
-                 limits: Limits, limits_mode: LimitsMode, observer: Optional[Position], logging: Logging) -> None:
+                 fov: Limits, limits_mode: LimitsMode, observer: Optional[Position], logging: Logging) -> None:
         self.__data_provider = data_provider
         self.__output_coord_system_conversion: CoordSysConv = output_coord_system_conversion
         self.__fn_out: str = fn_out
@@ -91,8 +92,8 @@ class FilterSimulator(ABC):
         self.__manual_frames: FrameList = FrameList()
         self.__refresh: threading.Event = threading.Event()
         self.__refresh_finished: threading.Event = threading.Event()
-        self.__limits_manual: Limits = limits
-        self.__det_borders: Limits = self.__limits_manual
+        self.__fov: Limits = fov
+        self.__det_limits: Limits = copy.deepcopy(fov)
         self.__limits_mode: LimitsMode = limits_mode
         self.__limits_mode_inited: bool = False
         self.__prev_lim: Limits = Limits(0, 0, 0, 0)
@@ -104,7 +105,7 @@ class FilterSimulator(ABC):
         self.__anim = None
         self.__movie_writer = None
         self.__n_video_frames = 0
-        self.__fn_out_video_gen: str = None  # For the generated name
+        self.__fn_out_video_gen: Optional[str] = None  # For the generated name
 
     @property
     def fn_out_seq_max(self) -> int:
@@ -147,8 +148,8 @@ class FilterSimulator(ABC):
         return self.__fig
 
     @property
-    def _det_borders(self) -> Limits:
-        return self.__det_borders
+    def _det_limits(self) -> Limits:
+        return self.__det_limits
 
     def __set_next_step(self) -> bool:
         if self.__simulation_direction == SimulationDirection.FORWARD:
@@ -386,47 +387,75 @@ class FilterSimulator(ABC):
     # end def
 
     def __update_window_limits(self) -> None:
-        set_det_borders: bool = False
+        def calc_plotting_borders_add_margin(limits: Limits, margin_mul=0.0, margin_add=0.0):  # margin_mul: 0.1 = 10%
+            left = limits.x_min
+            right = limits.x_max
+            bottom = limits.y_min
+            top = limits.y_max
+
+            # Add some additional margin
+            if top - bottom > right - left:
+                size = top - bottom
+            else:
+                size = right - left
+
+            left -= (size * margin_mul + margin_add)
+            right += (size * margin_mul + margin_add)
+            bottom -= (size * margin_mul + margin_add)
+            top += (size * margin_mul + margin_add)
+
+            return Limits(left, bottom, right, top)
+        # end def
+
+        set_det_limits: bool = False
         set_prev_limits: bool = False
-        set_manual_limits: bool = False
+        set_fov_limits: bool = False
+        margin_mul = .05
+        margin_add = .0
 
         if self.__limits_mode == LimitsMode.ALL_DETECTIONS_INIT_ONLY:
             if not self.__limits_mode_inited:
-                set_det_borders = True
+                set_det_limits = True
                 self.__limits_mode_inited = True
             else:
                 set_prev_limits = True
             # end if
 
         elif self.__limits_mode == LimitsMode.ALL_DETECTIONS_FIXED_UPDATE:
-            set_det_borders = True
+            set_det_limits = True
 
         elif self.__limits_mode == LimitsMode.ALL_CANVAS_ELEMENTS_DYN_UPDATE:
             pass
 
-        elif self.__limits_mode == LimitsMode.MANUAL_AREA_INIT_ONLY:
+        elif self.__limits_mode == LimitsMode.FOV_INIT_ONLY:
             if not self.__limits_mode_inited:
-                set_manual_limits = True
+                set_fov_limits = True
                 self.__limits_mode_inited = True
             else:
                 set_prev_limits = True
             # end if
 
-        elif self.__limits_mode == LimitsMode.MANUAL_AREA_FIXED_UPDATE:
-            set_manual_limits = True
+        elif self.__limits_mode == LimitsMode.FOV_FIXED_UPDATE:
+            set_fov_limits = True
         # end if
 
-        if set_det_borders:
-            self._ax.set_xlim(self._det_borders.x_min, self._det_borders.x_max)
-            self._ax.set_ylim(self._det_borders.y_min, self._det_borders.y_max)
+        if set_det_limits:
+            # Sets the limits to the determined limits of the detections
+            det = calc_plotting_borders_add_margin(self.__det_limits, margin_mul=margin_mul, margin_add=margin_add)
+            self._ax.set_xlim(det.x_min, det.x_max)
+            self._ax.set_ylim(det.y_min, det.y_max)
 
         elif set_prev_limits:
+            # Sets the limits to the values stored before drawing, since drawing the elements might unwantedly change the limits - in short: keep the limits as they were before
             self._ax.set_xlim(self.__prev_lim.x_min, self.__prev_lim.x_max)
             self._ax.set_ylim(self.__prev_lim.y_min, self.__prev_lim.y_max)
 
-        elif set_manual_limits:
-            self._ax.set_xlim(self.__limits_manual.x_min, self.__limits_manual.x_max)
-            self._ax.set_ylim(self.__limits_manual.y_min, self.__limits_manual.y_max)
+        elif set_fov_limits:
+            # Sets the limits to the limits given by the command line parameters
+            fov = calc_plotting_borders_add_margin(self.__fov, margin_mul=margin_mul, margin_add=margin_add)
+            self._ax.set_xlim(fov.x_min, fov.x_max)
+            self._ax.set_ylim(fov.y_min, fov.y_max)
+
         # end if
     # end def
 
@@ -448,7 +477,7 @@ class FilterSimulator(ABC):
             self.__observer = self._frames.calc_center()
 
         # Get the borders around the points for creating new particles later on
-        self.__det_borders = self._frames.calc_limits()
+        self.__det_limits = self._frames.calc_limits()
 
         # Simulation loop
         while True:

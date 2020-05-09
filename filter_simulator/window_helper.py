@@ -10,11 +10,21 @@ class WindowMode(IntEnum):
 
 
 class LimitsMode(IntEnum):
+    # Sets the limits to the outer border of the set of all detections only at the beginning and keeps the limits during the program lifecycle at whatever they were changed to
     ALL_DETECTIONS_INIT_ONLY = 0
+
+    # Sets the limits to the outer border of the set of all detections for each refresh - if the limits were manually changed, they'll get reset at the next simulation step
     ALL_DETECTIONS_FIXED_UPDATE = 1
+
+    # Lets matplotlib decide an its own, how to set the limits (e.g. we do nothing) - this should be so that all drawing elements are within the limits
+    # and will adapt dynamically as the drawing elements change
     ALL_CANVAS_ELEMENTS_DYN_UPDATE = 2
-    MANUAL_AREA_INIT_ONLY = 3
-    MANUAL_AREA_FIXED_UPDATE = 4
+
+    # Sets the limits to the fov only at the beginning and keeps the limits during the program lifecycle at whatever they were changed to
+    FOV_INIT_ONLY = 3
+
+    # Sets the limits to the fov for each refresh - if the limits were manually changed, they'll get reset at the next simulation step
+    FOV_FIXED_UPDATE = 4
 # end class
 
 

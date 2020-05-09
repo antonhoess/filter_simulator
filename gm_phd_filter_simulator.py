@@ -6,7 +6,7 @@ import sys
 import random
 import numpy as np
 from datetime import datetime
-from matplotlib.patches import Ellipse
+from matplotlib.patches import Ellipse, Rectangle
 from matplotlib.legend_handler import HandlerPatch
 import seaborn as sns
 from enum import Enum
@@ -28,13 +28,15 @@ from filter_simulator.window_helper import LimitsMode
 
 class DrawLayer(Enum):
     DENSITY_MAP = 0
-    ALL_DET = 1
-    ALL_DET_CONN = 2
-    GMM_COV_ELL = 3
-    GMM_COV_MEAN = 4
-    EST_STATE = 5
-    ALL_EST_STATE = 6
-    CUR_DET = 7
+    FOV = 1
+    BIRTH_AREA = 2
+    ALL_DET = 3
+    ALL_DET_CONN = 4
+    GMM_COV_ELL = 5
+    GMM_COV_MEAN = 6
+    EST_STATE = 7
+    ALL_EST_STATE = 8
+    CUR_DET = 9
 # end class
 
 
@@ -51,28 +53,16 @@ class DataProviderType(Enum):
 # end class
 
 
-class HandlerEllipse(HandlerPatch):
-    def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height, fontsize, trans):
-        center = 0.5 * width - 0.5 * xdescent, 0.5 * height - 0.5 * ydescent
-        p = Ellipse(xy=center, width=width + xdescent, height=height + ydescent)
-        self.update_prop(p, orig_handle, legend)
-        p.set_transform(trans)
-
-        return [p]
-    # end create_artists
-# end HandlerEllipse
-
-
 class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
     def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv,
-                 fn_out: str, fn_out_video: Optional[str], auto_step_interval: int, limits: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
+                 fn_out: str, fn_out_video: Optional[str], auto_step_interval: int, fov: Limits, birth_area: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
                  birth_gmm: List[GmComponent], p_survival: float, p_detection: float,
                  f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, clutter: float,
                  trunc_thresh: float, merge_thresh: float, max_components: int,
                  ext_states_bias: float, ext_states_use_integral: bool,
                  density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int,
                  draw_layers: Optional[List[DrawLayer]], show_legend: Optional[Union[int, str]], show_colorbar: bool):
-        FilterSimulator.__init__(self, data_provider, output_coord_system_conversion, fn_out, fn_out_video, auto_step_interval, limits, limits_mode, observer, logging)
+        FilterSimulator.__init__(self, data_provider, output_coord_system_conversion, fn_out, fn_out_video, auto_step_interval, fov, limits_mode, observer, logging)
         GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, clutter=clutter, logging=logging)
 
         self.__trunc_thresh = trunc_thresh
@@ -87,6 +77,8 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         self.__draw_layers: Optional[List[DrawLayer]] = draw_layers if draw_layers is not None else [ly for ly in DrawLayer]
         self.__show_legend: Optional[Union[int, str]] = show_legend
         self.__show_colorbar: bool = show_colorbar
+        self.__fov: Limits = fov
+        self.__birth_area: Limits = birth_area
 
         self.__ext_states: List[List[np.ndarray]] = []
         self.__colorbar_is_added = False
@@ -166,8 +158,8 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         return np.array(vals).reshape(x.shape)
 
     def __calc_density_map(self, grid_res: int = 100) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        x_: np.ndarray = np.linspace(self._det_borders.x_min, self._det_borders.x_max, grid_res)
-        y_: np.ndarray = np.linspace(self._det_borders.y_min, self._det_borders.y_max, grid_res)
+        x_: np.ndarray = np.linspace(self.__fov.x_min, self.__fov.x_max, grid_res)
+        y_: np.ndarray = np.linspace(self.__fov.y_min, self.__fov.y_max, grid_res)
 
         x, y = np.meshgrid(x_, y_)
         z: np.ndarray = np.array(self.__calc_density(x, y))
@@ -201,6 +193,18 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
     # end def
 
     def _update_window(self) -> None:
+        class HandlerEllipse(HandlerPatch):
+            def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height, fontsize, trans):
+                center = 0.5 * width - 0.5 * xdescent, 0.5 * height - 0.5 * ydescent
+                p = Ellipse(xy=center, width=width + xdescent, height=height + ydescent)
+                self.update_prop(p, orig_handle, legend)
+                p.set_transform(trans)
+
+                return [p]
+            # end
+
+        # end
+
         self._fig.suptitle("Gm-PHD Filter Simulator")
         self._ax.set_title(f"Sim-Step: {self._step}, # Est. States: {len(self.__ext_states[-1]) if len(self.__ext_states) > 0 else '-'}, # GMM-Components: {len(self._gmm)}")
 
@@ -229,10 +233,26 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
                 else:  # DensityDrawStyle.DRAW_HEATMAP
                     samples = self._gmm.samples(self.__n_samples_density_map)
-                    det_borders = self._det_borders
+                    det_limits = self._det_limits
                     plot = self._ax.hist2d([s[0] for s in samples], [s[1] for s in samples], bins=self.__n_bins_density_map,
-                                           range=[[det_borders.x_min, det_borders.x_max], [det_borders.y_min, det_borders.y_max]], density=False, cmap=cmap, zorder=zorder)  # Colorbar instead of label
+                                           range=[[det_limits.x_min, det_limits.x_max], [det_limits.y_min, det_limits.y_max]], density=False, cmap=cmap, zorder=zorder)  # Colorbar instead of label
                 # end if
+
+            elif ly == DrawLayer.FOV:
+                # The rectangle defining the Field of View (FoV)
+                width = self.__fov.x_max - self.__fov.x_min
+                height = self.__fov.y_max - self.__fov.y_min
+                ell = Rectangle(xy=(self.__fov.x_min, self.__fov.y_min), width=width, height=height, fill=False, edgecolor="black",
+                                linestyle="--", linewidth=0.5,  zorder=zorder, label="fov")
+                self._ax.add_patch(ell)
+
+            elif ly == DrawLayer.BIRTH_AREA:
+                # The rectangle defining the birth area of the simulator
+                width = self.__birth_area.x_max - self.__birth_area.x_min
+                height = self.__birth_area.y_max - self.__birth_area.y_min
+                ell = Rectangle(xy=(self.__birth_area.x_min, self.__birth_area.y_min), width=width, height=height, fill=False, edgecolor="black",
+                                linestyle=":", linewidth=0.5,  zorder=zorder, label="birth area")
+                self._ax.add_patch(ell)
 
             elif ly == DrawLayer.ALL_DET:
                 # All detections - each frame's detections in a different color
@@ -460,10 +480,10 @@ class GmPhdFilterSimulatorConfig:
                            help="Sets the data provider type that defines the data source. DataProviderType.FILE_READER reads lines from file defined in --input_file, "
                                 "DataProviderType.SIMULATOR simulates the PHD behaviour defined by the parameters given in section SIMULATOR).")
 
-        group.add_argument("--limits", metavar=("X_MIN", "Y_MIN", "X_MAX", "Y_MAX"), action=self.__LimitsAction, type=float, nargs=4, default=Limits(-10, -10, 0, 0),
-                           help="Sets the limits for the canvas.")
+        group.add_argument("--fov", metavar=("X_MIN", "Y_MIN", "X_MAX", "Y_MAX"), action=self.__LimitsAction, type=float, nargs=4, default=Limits(-10, -10, 10, 10),
+                           help="Sets the Field of View (FoV) of the scene.")
 
-        group.add_argument("--limits_mode", action=self._EvalAction, comptype=LimitsMode, choices=[str(t) for t in LimitsMode], default=LimitsMode.MANUAL_AREA_INIT_ONLY,
+        group.add_argument("--limits_mode", action=self._EvalAction, comptype=LimitsMode, choices=[str(t) for t in LimitsMode], default=LimitsMode.FOV_INIT_ONLY,
                            help="Sets the limits mode, which defines how the limits for the plotting window are set initially and while updating the plot.")
 
         group.add_argument("--verbosity", action=self._EvalAction, comptype=Logging, choices=[str(t) for t in Logging], default=Logging.INFO,
@@ -539,6 +559,9 @@ class GmPhdFilterSimulatorConfig:
 
         # Simulator group
         group = self.__parser.add_argument_group("Simulator - calculates detections from simulation")
+
+        group.add_argument("--birth_area", metavar=("X_MIN", "Y_MIN", "X_MAX", "Y_MAX"), action=self.__LimitsAction, type=float, nargs=4, default=None,
+                           help="Sets the are for newly born targets. It not set, the same limits as defined by --fov will get used.")
 
         group.add_argument("--sim_t_max", type=int, default=50,
                            help="Sets the number of simulation steps to SIM_T_MAX when using the DataProviderType.SIMULATOR (see parameter --data_provider).")
@@ -631,15 +654,21 @@ class GmPhdFilterSimulatorConfig:
 
 
 def main(argv: List[str]):
-    # Read command line arguments
-    config = GmPhdFilterSimulatorConfig()
-    args = config.read(argv[1:])
 
     # Library settings
     sns.set(color_codes=True)
 
     # Initialize random generator
     random.seed(datetime.now())
+
+    # Read command line arguments
+    config = GmPhdFilterSimulatorConfig()
+    args = config.read(argv[1:])
+
+    # Update read parameters
+    if args.birth_area is None:
+        args.birth_area = args.fov
+    # end if
 
     # Evaluate dynamic matrices
     if args.transition_model == TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND:
@@ -659,7 +688,7 @@ def main(argv: List[str]):
 
     else:  # data_provider == DataProviderType.SIMULATOR
         data_provider = PhdFilterDataProvider(f=args.f, q=args.q, dt=args.dt, t_max=args.sim_t_max, n_birth=args.n_birth, var_birth=args.var_birth, n_fa=int(args.clutter), var_fa=int(args.clutter),
-                                              limits=args.limits,
+                                              fov=args.fov, birth_area=args.birth_area,
                                               p_survival=args.p_survival, p_detection=args.p_detection, sigma_vel_x=args.sigma_vel_x, sigma_vel_y=args.sigma_vel_y)
     # end if
 
@@ -669,7 +698,7 @@ def main(argv: List[str]):
     # end if
     sim: GmPhdFilterSimulator = GmPhdFilterSimulator(data_provider=data_provider, output_coord_system_conversion=args.output_coord_system_conversion, fn_out=args.output,
                                                      fn_out_video=args.output_video,
-                                                     auto_step_interval=args.auto_step_interval, limits=args.limits, limits_mode=args.limits_mode, observer=args.observer, logging=args.verbosity,
+                                                     auto_step_interval=args.auto_step_interval, fov=args.fov, birth_area=args.birth_area, limits_mode=args.limits_mode, observer=args.observer, logging=args.verbosity,
                                                      birth_gmm=args.birth_gmm, p_survival=args.p_survival, p_detection=args.p_detection,
                                                      f=args.f, q=args.q, h=args.h, r=args.r, clutter=args.clutter,
                                                      trunc_thresh=args.trunc_thresh, merge_thresh=args.merge_thresh, max_components=args.max_components,

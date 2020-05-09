@@ -79,8 +79,8 @@ class ParticleFilterSimulator(FilterSimulator, ParticleFilter):
         return accum
 
     def __calc_density_map(self, grid_res: int = 100) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        x_: np.ndarray = np.linspace(self._det_borders.x_min, self._det_borders.x_max, grid_res)
-        y_: np.ndarray = np.linspace(self._det_borders.y_min, self._det_borders.y_max, grid_res)
+        x_: np.ndarray = np.linspace(self.__fov.x_min, self.__fov.x_max, grid_res)
+        y_: np.ndarray = np.linspace(self.__fov.y_min, self.__fov.y_max, grid_res)
 
         x, y = np.meshgrid(x_, y_)
         z: np.ndarray = np.array(self._calc_density(x, y))

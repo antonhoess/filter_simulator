@@ -1,5 +1,5 @@
-from __future__ import annotations
-from typing import List, Optional
+# from __future__ import annotations
+# from typing import List, Optional
 
 from filter_simulator.common import FrameList, Detection, Limits
 from filter_simulator.data_provider_interface import IDataProvider
@@ -63,7 +63,7 @@ class Obj:
 
 
 class Simulator:
-    def __init__(self, f: np.ndarray, q: np.ndarray, t: float, t_max: int, n_birth: int, var_birth: int, n_fa: int, var_fa: int, limits: Limits, p_survival: float, p_detection: float, sigma_vel_x: float, sigma_vel_y: float, seed=None, show_visu=True):
+    def __init__(self, f: np.ndarray, q: np.ndarray, t: float, t_max: int, n_birth: int, var_birth: int, n_fa: int, var_fa: int, fov: Limits, birth_area: Limits, p_survival: float, p_detection: float, sigma_vel_x: float, sigma_vel_y: float, seed=None, show_visu=True):
         """
         :param fn_data: Name of file where simulation is saved.
         :param cst: Configuration object with already set values.
@@ -80,7 +80,8 @@ class Simulator:
         self.n_birth = n_birth
         self.var_birth = var_birth
 
-        self.limits: Limits = limits  # We don't need to calulate the FoV in pixels, do we? I think it's only for the discretization of the false alarms, e.g. for a camera
+        self.fov: Limits = fov  # We don't need to calulate the FoV in pixels, do we? I think it's only for the discretization of the false alarms, e.g. for a camera - wrong: it's to calculate the poisson rate... check this
+        self.birth_area: Limits = birth_area
 
         self.p_s = p_survival  # Probability of survival
         self.p_d = p_detection  # Probability of detection
@@ -220,7 +221,7 @@ class Simulator:
                 pred_obj = Obj(np.dot(self.f, obj[-1].state) + np.random.multivariate_normal(mean=np.zeros(self.q.shape[0]), cov=self.q), tt)
 
                 # If target is outside FoV, kill it, otherwise update trajectories with current state
-                if not (self.limits.x_min <= pred_obj.pos_x <= self.limits.x_max) or not (self.limits.y_min <= pred_obj.pos_y <= self.limits.x_max):
+                if not (self.fov.x_min <= pred_obj.pos_x <= self.fov.x_max) or not (self.fov.y_min <= pred_obj.pos_y <= self.fov.x_max):
                     ind_deaths.append(ii)
                 else:
                     obj.append(pred_obj)
@@ -236,8 +237,8 @@ class Simulator:
 
             for ii in range(n_births):
                 self.__objects.append([])
-                self.__objects[-1].append(Obj(np.array([self.__sample_random_from_range(self.limits.x_min, self.limits.x_max),
-                                                        self.__sample_random_from_range(self.limits.y_min, self.limits.y_max),
+                self.__objects[-1].append(Obj(np.array([self.__sample_random_from_range(self.birth_area.x_min, self.birth_area.x_max),
+                                                        self.__sample_random_from_range(self.birth_area.y_min, self.birth_area.y_max),
                                                         self.sigma_vel_x * np.random.randn(),
                                                         self.sigma_vel_y * np.random.randn()]),
                                               tt))
@@ -264,8 +265,8 @@ class Simulator:
 
             # Add clutter (as false measurements) to measurements
             for _ in range(n_clu):
-                self.__data[tt].append(Pos(self.__sample_random_from_range(self.limits.x_min, self.limits.x_max),
-                                           self.__sample_random_from_range(self.limits.y_min, self.limits.y_max)))
+                self.__data[tt].append(Pos(self.__sample_random_from_range(self.fov.x_min, self.fov.x_max),
+                                           self.__sample_random_from_range(self.fov.y_min, self.fov.y_max)))
             # end for
 
             # Update visualization
@@ -305,10 +306,10 @@ class Simulator:
 
 
 class PhdFilterDataProvider(IDataProvider):
-    def __init__(self, f: np.ndarray, q: np.ndarray, dt: float, t_max: int, n_birth: int, var_birth: int, n_fa: int, var_fa: int, limits: Limits, p_survival: float, p_detection: float, sigma_vel_x: float, sigma_vel_y: float):
+    def __init__(self, f: np.ndarray, q: np.ndarray, dt: float, t_max: int, n_birth: int, var_birth: int, n_fa: int, var_fa: int, fov: Limits, birth_area: Limits, p_survival: float, p_detection: float, sigma_vel_x: float, sigma_vel_y: float):
         self.__frame_list: FrameList = FrameList()
         show_visu = False
-        meas_data, ground_truth, _all_objects = Simulator(f, q, dt, t_max, n_birth, var_birth, n_fa, var_fa, limits, p_survival, p_detection, sigma_vel_x, sigma_vel_y, seed=None, show_visu=show_visu).run()
+        meas_data, ground_truth, _all_objects = Simulator(f, q, dt, t_max, n_birth, var_birth, n_fa, var_fa, fov, birth_area, p_survival, p_detection, sigma_vel_x, sigma_vel_y, seed=None, show_visu=show_visu).run()
 
         for data in meas_data:
             self.__frame_list.add_empty_frame()
