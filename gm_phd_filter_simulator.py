@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from __future__ import annotations
-from typing import Sequence, List, Tuple, Optional
+from typing import Sequence, List, Tuple, Optional, Union
 import os
 import sys
 import getopt
@@ -9,6 +9,7 @@ import random
 import numpy as np
 from datetime import datetime
 from matplotlib.patches import Ellipse
+from matplotlib.legend_handler import HandlerPatch
 import seaborn as sns
 from enum import Enum
 
@@ -48,6 +49,18 @@ class DataProviderType(Enum):
 # end class
 
 
+class HandlerEllipse(HandlerPatch):
+    def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height, fontsize, trans):
+        center = 0.5 * width - 0.5 * xdescent, 0.5 * height - 0.5 * ydescent
+        p = Ellipse(xy=center, width=width + xdescent, height=height + ydescent)
+        self.update_prop(p, orig_handle, legend)
+        p.set_transform(trans)
+
+        return [p]
+    # end create_artists
+# end HandlerEllipse
+
+
 class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
     def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv,
                  fn_out: str, fn_out_video: Optional[str], auto_step_interval: int, limits: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
@@ -56,7 +69,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                  trunc_thresh: float, merge_thresh: float, max_components: int,
                  ext_states_bias: float, ext_states_use_integral: bool,
                  density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int,
-                 draw_layers: Optional[List[DrawLayer]]):
+                 draw_layers: Optional[List[DrawLayer]], show_legend: Optional[Union[int, str]], show_colorbar: bool):
         FilterSimulator.__init__(self, data_provider, output_coord_system_conversion, fn_out, fn_out_video, auto_step_interval, limits, limits_mode, observer, logging)
         GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, clutter=clutter, logging=logging)
 
@@ -70,8 +83,11 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         self.__n_bins_density_map = n_bins_density_map
         self.__logging: Logging = logging
         self.__draw_layers: Optional[List[DrawLayer]] = draw_layers if draw_layers is not None else [ly for ly in DrawLayer]
+        self.__show_legend: Optional[Union[int, str]] = show_legend
+        self.__show_colorbar: bool = show_colorbar
 
         self.__ext_states: List[List[np.ndarray]] = []
+        self.__colorbar_is_added = False
 
     def _set_sim_loop_step_part_conf(self):
         # Configure the processing steps
@@ -186,72 +202,79 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         self._fig.suptitle("Gm-PHD Filter Simulator")
         self._ax.set_title(f"Sim-Step: {self._step}, # Est. States: {len(self.__ext_states[-1]) if len(self.__ext_states) > 0 else '-'}, # GMM-Components: {len(self._gmm)}")
 
+        # cmap = "Greys"
+        # cmap = "plasma"
+        cmap = "Blues"
+
+        pll = set()
+        plot = None
+
         for l, ly in enumerate(self.__draw_layers):
             zorder = l
 
             if ly == DrawLayer.DENSITY_MAP:
-                # cmap = "Greys"
-                # cmap = "plasma"
-                cmap = "Blues"
                 # Draw density map
                 if self.__density_draw_style == DensityDrawStyle.KDE:
                     if len(self._gmm) > 0:
                         samples = self._gmm.samples(self.__n_samples_density_map)
                         x = [s[0] for s in samples]
                         y = [s[1] for s in samples]
-                        sns.kdeplot(x, y, shade=True, ax=self._ax, shade_lowest=False, cmap=cmap, zorder=zorder)
+                        plot = sns.kdeplot(x, y, shade=True, ax=self._ax, shade_lowest=False, cmap=cmap, zorder=zorder)  # Colorbar instead of label
                     # end if
 
                 elif self.__density_draw_style == DensityDrawStyle.EVAL:
                     x, y, z = self.__calc_density_map(grid_res=self.__n_bins_density_map)
-                    self._ax.contourf(x, y, z, 100, cmap=cmap)
+                    plot = self._ax.contourf(x, y, z, 100, cmap=cmap, zorder=zorder)  # Colorbar instead of label
 
                 else:  # DensityDrawStyle.DRAW_HEATMAP
                     samples = self._gmm.samples(self.__n_samples_density_map)
                     det_borders = self._det_borders
-                    self._ax.hist2d([s[0] for s in samples], [s[1] for s in samples], bins=self.__n_bins_density_map,
-                                    range=[[det_borders.x_min, det_borders.x_max], [det_borders.y_min, det_borders.y_max]], density=False, cmap=cmap, zorder=zorder)
+                    plot = self._ax.hist2d([s[0] for s in samples], [s[1] for s in samples], bins=self.__n_bins_density_map,
+                                           range=[[det_borders.x_min, det_borders.x_max], [det_borders.y_min, det_borders.y_max]], density=False, cmap=cmap, zorder=zorder)  # Colorbar instead of label
                 # end if
 
             elif ly == DrawLayer.ALL_DET:
                 # All detections - each frame's detections in a different color
                 for frame in self._frames:
-                    self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=10, edgecolor="green", marker="o", zorder=zorder)
+                    self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=10, edgecolor="green", marker="o", zorder=zorder, label="det. ($t_{0..T}$)" if ly not in pll else None)
+                    pll.add(ly)
                 # end for
 
             elif ly == DrawLayer.ALL_DET_CONN:
                 # Connections between all detections - only makes sense, if they are manually created or created in a very ordered way, otherwise it's just chaos
                 for frame in self._frames:
-                    self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5, linestyle="--", zorder=zorder)
+                    self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5, linestyle="--", zorder=zorder, label="conn. det. ($t_{0..T}$)" if ly not in pll else None)
+                    pll.add(ly)
                 # end for
 
             elif ly == DrawLayer.GMM_COV_ELL:
                 if self._cur_frame is not None:
                     # GM-PHD components covariance ellipses
                     for comp in self._gmm:
-                        ell = self.__get_cov_ellipse_from_comp(comp, 1., facecolor='none', edgecolor="black", linewidth=.5, zorder=zorder)
+                        ell = self.__get_cov_ellipse_from_comp(comp, 1., facecolor='none', edgecolor="black", linewidth=.5, zorder=zorder, label="gmm cov. ell." if ly not in pll else None)
                         self._ax.add_patch(ell)
+                        pll.add(ly)
                     # end for
                 # end if
 
             elif ly == DrawLayer.GMM_COV_MEAN:
                 if self._cur_frame is not None:
                     # GM-PHD components means
-                    self._ax.scatter([comp.loc[0] for comp in self._gmm], [comp.loc[1] for comp in self._gmm], s=5, edgecolor="blue", marker="o", zorder=zorder)
+                    self._ax.scatter([comp.loc[0] for comp in self._gmm], [comp.loc[1] for comp in self._gmm], s=5, edgecolor="blue", marker="o", zorder=zorder, label="gmm comp. mean")
                 # end if
 
             elif ly == DrawLayer.EST_STATE:
                 if self._cur_frame is not None:
                     # Estimated states
                     est_items = self.__ext_states[-1]
-                    self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=200, c="gray", edgecolor="black", marker="o", zorder=zorder)
+                    self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=200, c="gray", edgecolor="black", marker="o", zorder=zorder, label="est. states ($t_k$)")
                 # end if
 
             elif ly == DrawLayer.ALL_EST_STATE:
                 if self._cur_frame is not None:
                     # Estimated states
                     est_items = [est_item for est_items in self.__ext_states for est_item in est_items]
-                    self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=50, c="red", edgecolor="black", marker="o", zorder=zorder)
+                    self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=50, c="red", edgecolor="black", marker="o", zorder=zorder, label="est. states ($t_{0..k}$)")
                 # end if
 
             elif ly == DrawLayer.CUR_DET:
@@ -259,10 +282,25 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                     # Current detections
                     det_pos_x: List[float] = [det.x for det in self._cur_frame]
                     det_pos_y: List[float] = [det.y for det in self._cur_frame]
-                    self._ax.scatter(det_pos_x, det_pos_y, s=100, c="red", marker="x", zorder=zorder)
+                    self._ax.scatter(det_pos_x, det_pos_y, s=100, c="red", marker="x", zorder=zorder, label="det. ($t_k$)")
                 # end if
             # end if
         # end for
+
+        # Colorbar
+        if self.__show_colorbar and not self.__colorbar_is_added and plot:
+            cb = self._fig.colorbar(plot, ax=self._ax)
+            cb.set_label("PHD intensity")
+            self.__colorbar_is_added = True
+        # end if
+
+        # Organize the legend handlers
+        if self.__show_legend:
+            handler_map = dict()
+            handler_map[Ellipse] = HandlerEllipse()
+            legend = self._ax.legend(loc=self.__show_legend, fontsize="xx-small", handler_map=handler_map)
+            legend.set_zorder(len(self.__draw_layers))  # Put the legend on top
+        # end if
     # end def
 
     def _cb_keyboard(self, cmd: str) -> None:
@@ -377,7 +415,7 @@ class GmPhdFilterSimulatorParam:
                "    Example: 1.\n" + \
                "\n" + \
                "    --ext_states_use_integral:\n" + \
-               "    Defines if the integral approach for extracting the current states should be used. 0 = False, 1 = True.\n" + \
+               "    Specifies if the integral approach for extracting the current states should be used. 0 = False, 1 = True.\n" + \
                "\n" + \
                "    --density_draw_style=DENSITY_DRAW_STYLE:\n" + \
                "    Sets the drawing style to visualizing the density/intensity map. Possible values are: DensityDrawStyle.KDE (kernel density estimator), " \
@@ -396,6 +434,14 @@ class GmPhdFilterSimulatorParam:
                "    Sets the list of drawing layers. Allows to draw only the required layers and in the desired order. As default all layers are drawn in a fixed order.\n" + \
                "    Example 1: [DrawLayer.DENSITY_MAP, DrawLayer.EST_STATE]\n" \
                "    Example 2: [layer for layer in DrawLayer if not layer == DrawLayer.GMM_COV_ELL and not layer == DrawLayer.GMM_COV_MEAN]\n" + \
+               "\n" + \
+               "    --show_legend=SHOW_LEGEND:\n" + \
+               "    If set, the legend will be shown. SHOW_LEGEND itself specifies the legend's location. The location can be specified with a number of the corresponding string from " \
+               "the following possibilities: 0 = 'best', 1 = 'upper right', 2 = 'upper left', 3 = 'lower left', 4 = 'lower right', 5 = 'right', 6 = 'center left', 7 = 'center right', " \
+               "8 = 'lower center', 9 = 'upper center', 10 = 'center'. Default: 4.\n" + \
+               "\n" + \
+               "-i, --show_colorbar=SHOW_COLORBAR:\n" + \
+               "    Specifies, if the colorbar should be shown. 0 = False, 1 = True [Default].\n" + \
                "\n" + \
                "\n" + \
                "FILE READER\n" + \
@@ -517,6 +563,8 @@ class GmPhdFilterSimulatorParam:
         n_samples_density_map: int = 10000
         n_bins_density_map: int = 100
         draw_layers: Optional[List[DrawLayer]] = None
+        show_legend: Optional[Union[int, str]] = 4  # =lower right"
+        show_colorbar: bool = True
 
         input_file: str = ""
         input_coord_system_conversion: CoordSysConv = CoordSysConv.NONE
@@ -535,8 +583,8 @@ class GmPhdFilterSimulatorParam:
                                                                  "mat_f=", "mat_q=", "mat_h=", "mat_r=", "sigma_vel_x=", "sigma_vel_y=", "sigma_accel_x=", "sigma_accel_y=", "clutter=",
                                                                  "trunc_thresh=", "merge_thresh=", "max_components=",
                                                                  "ext_states_bias=", "ext_states_use_integral=", "density_draw_style=", "n_samples_density_map=", "n_bins_density_map=", "draw_layers=",
-                                                                 "input=", "input_coord_system_conversion=", "output=", "output_seq_max=", "output_fill_gaps=", "output_coord_system_conversion=",
-                                                                 "output_video=", "auto_step_interval="])
+                                                                 "show_legend=", "show_colorbar=", "input=", "input_coord_system_conversion=", "output=", "output_seq_max=", "output_fill_gaps=",
+                                                                 "output_coord_system_conversion=", "output_video=", "auto_step_interval="])
 
         except getopt.GetoptError as e:
             print("Reading parameters caused error {}".format(e))
@@ -747,6 +795,16 @@ class GmPhdFilterSimulatorParam:
                     # end for
                 # end if
 
+            elif opt == "--show_legend":
+                try:
+                    show_legend = int(arg)
+                except ValueError:
+                    show_legend = arg
+                # end if
+
+            elif opt == "--show_colorbar":
+                show_colorbar = bool(int(arg))
+
             elif opt == "--input":
                 input_file = arg
 
@@ -769,7 +827,7 @@ class GmPhdFilterSimulatorParam:
                 output_seq_max = int(arg)
 
             elif opt == "--output_fill_gaps":
-                output_fill_gaps = bool(arg)
+                output_fill_gaps = bool(int(arg))
 
             elif opt == "--output_coord_system_conversion":
                 try:
@@ -831,7 +889,7 @@ class GmPhdFilterSimulatorParam:
                                                          trunc_thresh=trunc_thresh, merge_thresh=merge_thresh, max_components=max_components,
                                                          ext_states_bias=ext_states_bias, ext_states_use_integral=ext_states_use_integral,
                                                          density_draw_style=density_draw_style, n_samples_density_map=n_samples_density_map, n_bins_density_map=n_bins_density_map,
-                                                         draw_layers=draw_layers)
+                                                         draw_layers=draw_layers, show_legend=show_legend, show_colorbar=show_colorbar)
 
         sim.fn_out_seq_max = output_seq_max
         sim.fn_out_fill_gaps = output_fill_gaps
