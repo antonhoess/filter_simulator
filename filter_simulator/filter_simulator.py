@@ -202,7 +202,7 @@ class FilterSimulator(ABC):
         self.__window_mode_checker.check_event(action="key_release_event", event=event)
 
         fields = event.key.split("+")
-        
+
         if len(fields) == 2 and ("ctrl" in fields or "control" in fields) and "z" in fields:
             borders = self._frames.calc_limits()
             self._ax.set_xlim(borders.x_min, borders.x_max)

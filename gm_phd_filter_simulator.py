@@ -248,7 +248,6 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                 if self._cur_frame is not None:
                     # Estimated states
                     est_items = [est_item for est_items in self.__ext_states for est_item in est_items]
-                    # XXX print(est_items)
                     self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=50, c="red", edgecolor="black", marker="o", zorder=zorder)
                 # end if
 
@@ -283,9 +282,6 @@ def main(argv: List[str]):
                "DataProviderType.SIMULATOR (simulates the PHD behaviour defined by the paraemters given in section SIMULATOR).\n" + \
                "    Example: DensityDrawStyle.DRAW_HEATMAP" + \
                "\n" + \
-               "-o, --output=OUTPUT_FILE:\n" \
-               "    Sets the output file to store the (manually set or simulated) coordinates to OUTPUT_FILE.\n" + \
-               "\n" + \
                "-l, --limits=LIMITS:\n" + \
                "    Sets the limits for the canvas to LIMITS. Its format is 'Limits(X_MIN, Y_MIN, X_MAX Y_MAX)'.\n" + \
                "    Example: Limits(-10, -10, 10, 10)\n" + \
@@ -309,6 +305,12 @@ def main(argv: List[str]):
                "\n" + \
                "    --p_survival=P_SURVIVAL:\n" + \
                "    Sets the survival probability for the PHD from time step k to k+1.\n" + \
+               "\n" + \
+               "    --n_birth=N_BIRTH:\n" + \
+               "    Sets the average number of newly born objects in each step to N_BIRTH.\n" + \
+               "\n" + \
+               "    --var_birth=VAR_BIRTH:\n" + \
+               "    Sets the variance of newly born objects to VAR_BIRTH.\n" + \
                "\n" + \
                "    --p_detection=P_DETECTION:\n" + \
                "    Sets the (sensor's) detection probability for the measurements.\n" + \
@@ -335,6 +337,14 @@ def main(argv: List[str]):
                "    --mat_r=R:\n" + \
                "    Sets the measurement noise covariance matrix.\n" + \
                "    Example: np.eye(2) * .1\n" + \
+               "\n" + \
+               "    --sigma_accel_x=SIGMA_ACCEL_X:\n" + \
+               "    Sets the variance of the acceleration's x-component to calculate the process noise covariance_matrix Q. Only evaluated when using the " \
+               "TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND (see parameter --transition_model) and in this case ignores the value given for Q (see parameter --mat_q).\n" + \
+               "\n" + \
+               "    --sigma_accel_x=SIGMA_ACCEL_Y:\n" + \
+               "    Sets the variance of the acceleration's y-component to calculate the process noise covariance_matrix Q. Only evaluated when using the " \
+               "TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND (see parameter --transition_model) and in this case ignores the value given for Q (see parameter --mat_q).\n" + \
                "\n" + \
                "    --clutter=CLUTTER:\n" + \
                "    Sets the amount of clutter.\n" + \
@@ -363,7 +373,7 @@ def main(argv: List[str]):
                "    --density_draw_style=DENSITY_DRAW_STYLE:\n" + \
                "    Sets the drawing style to visualizing the density/intensity map. Possible values are: DensityDrawStyle.KDE (kernel density estimator), " \
                "DensityDrawStyle.EVAL (evaluate the correct value for each cell in a grid) and DensityDrawStyle.HEATMAP (heatmap made of sampled points from the PHD).\n" + \
-               "    Example: DensityDrawStyle.DRAW_HEATMAP" + \
+               "    Example: DensityDrawStyle.DRAW_HEATMAP\n" + \
                "\n" + \
                "    --n_samples_density_map=N_SAMPLES_DENSITY_MAP:\n" + \
                "    Sets the number samples to draw from the PHD for drawing the density map.\n" + \
@@ -389,14 +399,37 @@ def main(argv: List[str]):
                "    Defines the coordinates-conversion of the provided values from the INPUT_COORD_SYSTEM_CONVERSION into the internal system (ENU). " \
                "Possible values are class CoordSysConv.NONE [Default], CoordSysConv.WGS84\n" + \
                "\n" + \
-               "    --output_coord_system_conversion=OUTPUT_COORD_SYSTEM_CONVERSION:\n" + \
-               "    Defines the coordinates-conversion of the internal system (ENU) to the OUTPUT_COORD_SYSTEM_CONVERSION for storing the values. " \
-               "Possible values are class CoordSysConv.NONE [Default], CoordSysConv.WGS84\n" + \
-               "\n" + \
                "\n" + \
                "SIMULATOR\n" + \
                "    Calculates detections from simulation.\n" \
-               "XXX\n" \
+               "\n" + \
+               "    --sim_t_max=SIM_T_MAX:\n" + \
+               "    Sets the number of simulation steps to SIM_T_MAX when using the DataProviderType.SIMULATOR (see parameter --data_provider).\n" + \
+               "\n" + \
+               "    --sigma_vel_x=SIGMA_VEL_X:\n" + \
+               "    Sets the variance of the velocitiy's initial x-component of a newly born object to SIGMA_VEL_X.\n" + \
+               "\n" + \
+               "    --sigma_vel_y=SIGMA_VEL_Y:\n" + \
+               "    Sets the variance of the velocitiy's initial y-component of a newly born object to SIGMA_VEL_Y.\n" + \
+               "\n" + \
+               "\n" + \
+               "FILE STORAGE\n" \
+               "    Stores detection to file.\n" \
+               "\n" + \
+               "-o, --output=OUTPUT_FILE:\n" \
+               "    Sets the output file to store the (manually set or simulated) detections' coordinates to OUTPUT_FILE. Default: out.lst.\n" + \
+               "\n" + \
+               "    --output_seq_max=OUTPUT_SEQ_MAX:\n" + \
+               "    Sets the max. number to append at the end of the output file name (see parameter --output). This allows for automatically continuously named files and prevents overwriting " \
+               "previously stored results. The format will be x_0000, depending on the filename and the number of digits of OUTPUT_SEQ_MAX. Default: 9999\n" + \
+               "\n" + \
+               "    --output_fill_gaps=OUTPUT_FILL_GAPS:\n" + \
+               "    Indicates if the first empty file name will be used when determining a output file name (see parameters --output and --output_seq_max) or if the next number " \
+               "(to create the file name) will be N+1 with N is the highest number in the range and format given by --output_seq_max. 0 = False [Default], 1 = True\n" \
+               "\n" + \
+               "    --output_coord_system_conversion=OUTPUT_COORD_SYSTEM_CONVERSION:\n" + \
+               "    Defines the coordinates-conversion of the internal system (ENU) to the OUTPUT_COORD_SYSTEM_CONVERSION for storing the values. " \
+               "Possible values are class CoordSysConv.NONE [Default], CoordSysConv.WGS84\n" + \
                "\n" + \
                "\n" + \
                "GUI\n" + \
@@ -427,15 +460,15 @@ def main(argv: List[str]):
 
     data_provider_type: DataProviderType = DataProviderType.FILE_READER
 
-    output_file: str = "out.lst"
-    fn_out_seq_max = 9999  # XXX param
-    fn_out_fill_gaps = False  # XXX param
+    sim_t_max = 50
     limits: Limits = Limits(-10, -10, 10, 10)
     limits_mode: LimitsMode = LimitsMode.MANUAL_AREA_INIT_ONLY
     verbosity: Logging = Logging.INFO
     observer: Optional[Position] = None
 
     birth_gmm: Gmm = Gmm([GmComponent(0.1, [0, 0], np.eye(2) * 10. ** 2)])
+    n_birth: int = 1
+    var_birth: int = 1
     p_survival: float = 0.9
     p_detection: float = 0.9
     transition_model = TransitionModel.INDIVIDUAL
@@ -444,10 +477,10 @@ def main(argv: List[str]):
     q: np.ndarray = np.eye(2) * 0.
     h: np.ndarray = np.eye(2)
     r: np.ndarray = np.eye(2) * .1
-    sigma_vel_x = .2  # XXX in parameter aufnehmen
-    sigma_vel_y = .2  # XXX in parameter aufnehmen
-    sigma_q_x = .4  # XXX in parameter aufnehmen
-    sigma_q_y = .3  # XXX in parameter aufnehmen
+    sigma_vel_x = .2
+    sigma_vel_y = .2
+    sigma_accel_x = .1
+    sigma_accel_y = .1
     clutter: float = 2e-6
     trunc_thresh: float = 1e-6
     merge_thresh: float = 0.01
@@ -461,14 +494,19 @@ def main(argv: List[str]):
 
     input_file: str = ""
     input_coord_system_conversion: CoordSysConv = CoordSysConv.NONE
+
+    output: str = "out.lst"
+    output_seq_max = 9999
+    output_fill_gaps = False
     output_coord_system_conversion: CoordSysConv = CoordSysConv.NONE
 
     try:
-        opts, args = getopt.getopt(argv[1:], "hi:l:o:p:v:", ["help", "data_provider=", "limits=", "limits_mode=", "output=", "observer_position=", "verbosity_level=",
-                                                             "birth_gmm=", "p_survival=", "p_detection=", "transition_model=", "delta_t=", "mat_f=", "mat_q=", "mat_h=", "mat_r=", "clutter=",
+        opts, args = getopt.getopt(argv[1:], "hi:l:o:p:v:", ["help", "data_provider=", "sim_t_max=", "limits=", "limits_mode=", "observer_position=", "verbosity_level=",
+                                                             "birth_gmm=", "n_birth=", "var_birth=", "p_survival=", "p_detection=", "transition_model=", "delta_t=",
+                                                             "mat_f=", "mat_q=", "mat_h=", "mat_r=", "sigma_vel_x=", "sigma_vel_y=", "sigma_accel_x=", "sigma_accel_y=", "clutter=",
                                                              "trunc_thresh=", "merge_thresh=", "max_components=",
                                                              "ext_states_bias=", "ext_states_use_integral=", "density_draw_style=", "n_samples_density_map=", "n_bins_density_map=", "draw_layers=",
-                                                             "input=", "input_coord_system_conversion=", "output_coord_system_conversion="])
+                                                             "input=", "input_coord_system_conversion=", "output=", "output_seq_max=", "output_fill_gaps=", "output_coord_system_conversion="])
 
     except getopt.GetoptError as e:
         print("Reading parameters caused error {}".format(e))
@@ -495,6 +533,9 @@ def main(argv: List[str]):
                 err = True
             # end if
 
+        elif opt == "--sim_t_max":
+            sim_t_max = int(arg)
+
         elif opt in ("-l", "--limits"):
             try:
                 limits = eval(arg)
@@ -516,9 +557,6 @@ def main(argv: List[str]):
             if not isinstance(limits_mode, LimitsMode):
                 err = True
             # end if
-
-        elif opt == ("-o", "--output"):
-            output_file = arg
 
         elif opt in ("-p", "--observer_position"):
             fields: List[str] = arg.split(";")
@@ -545,6 +583,12 @@ def main(argv: List[str]):
             else:
                 err = True
             # end if
+
+        elif opt == "--n_birth":
+            n_birth = int(arg)
+
+        elif opt == "--var_birth":
+            var_birth = int(arg)
 
         elif opt == "--p_survival":
             p_survival = float(arg)
@@ -609,6 +653,18 @@ def main(argv: List[str]):
             if not isinstance(r, np.ndarray):
                 err = True
             # end if
+
+        elif opt == "--sigma_vel_x":
+            sigma_vel_x = float(arg)
+
+        elif opt == "--sigma_vel_y":
+            sigma_vel_y = float(arg)
+
+        elif opt == "--sigma_accel_x":
+            sigma_accel_x = float(arg)
+
+        elif opt == "--sigma_accel_y":
+            sigma_accel_y = float(arg)
 
         elif opt == "--clutter":
             clutter = float(arg)
@@ -676,6 +732,15 @@ def main(argv: List[str]):
             # end if
         # end if
 
+        elif opt == ("-o", "--output"):
+            output = arg
+
+        elif opt == "--output_seq_max":
+            output_seq_max = int(arg)
+
+        elif opt == "--output_fill_gaps":
+            output_fill_gaps = bool(arg)
+
         elif opt == "--output_coord_system_conversion":
             try:
                 output_coord_system_conversion = eval(arg)
@@ -698,10 +763,9 @@ def main(argv: List[str]):
         # end if
     # end for
 
-
     # Evaluate dynamic matrices
     if transition_model == TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND:
-        m = PcwConstWhiteAccelModelNd(dim=2, sigma=(sigma_q_x, sigma_q_y))
+        m = PcwConstWhiteAccelModelNd(dim=2, sigma=(sigma_accel_x, sigma_accel_y))
 
         f = m.eval_f(dt)
         q = m.eval_q(dt)
@@ -716,15 +780,16 @@ def main(argv: List[str]):
         data_provider = line_handler
 
     else:  # data_provider_type == DataProviderType.SIMULATOR
-        # XXX replace fixed paraemter values
-        data_provider = PhdFilterDataProvider(f=f, q=q, dt=dt, t_max=50, n_birth=1, var_birth=1, n_fa=clutter, var_fa=clutter, limits=limits, p_survival=p_survival, p_detection=p_detection, sigma_vel_x=sigma_vel_x, sigma_vel_y=sigma_vel_y)
+        data_provider = PhdFilterDataProvider(f=f, q=q, dt=dt, t_max=sim_t_max, n_birth=n_birth, var_birth=var_birth, n_fa=int(clutter), var_fa=int(clutter), limits=limits,
+                                              p_survival=p_survival, p_detection=p_detection, sigma_vel_x=sigma_vel_x, sigma_vel_y=sigma_vel_y)
     # end if
 
     # Convert data from certain coordinate systems to ENU, which is used internally
     if input_coord_system_conversion == CoordSysConv.WGS84:
         data_provider = Wgs84ToEnuConverter(data_provider.frame_list, observer)
     # end if
-    sim: GmPhdFilterSimulator = GmPhdFilterSimulator(data_provider=data_provider, output_coord_system_conversion=output_coord_system_conversion, fn_out=output_file, limits=limits, limits_mode=limits_mode, observer=observer, logging=verbosity,
+    sim: GmPhdFilterSimulator = GmPhdFilterSimulator(data_provider=data_provider, output_coord_system_conversion=output_coord_system_conversion, fn_out=output,
+                                                     limits=limits, limits_mode=limits_mode, observer=observer, logging=verbosity,
                                                      birth_gmm=birth_gmm, p_survival=p_survival, p_detection=p_detection,
                                                      f=f, q=q, h=h, r=r, clutter=clutter,
                                                      trunc_thresh=trunc_thresh, merge_thresh=merge_thresh, max_components=max_components,
@@ -732,8 +797,8 @@ def main(argv: List[str]):
                                                      density_draw_style=density_draw_style, n_samples_density_map=n_samples_density_map, n_bins_density_map=n_bins_density_map,
                                                      draw_layers=draw_layers)
 
-    sim.fn_out_seq_max = fn_out_seq_max
-    sim.fn_out_fill_gaps = fn_out_fill_gaps
+    sim.fn_out_seq_max = output_seq_max
+    sim.fn_out_fill_gaps = output_fill_gaps
 
     sim.run()
 
