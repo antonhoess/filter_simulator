@@ -192,6 +192,7 @@ class FilterSimulator(ABC):
         self.__fig.canvas.mpl_connect("button_release_event", self.__cb_button_release_event)
         self.__fig.canvas.mpl_connect("key_press_event", self.__cb_key_press_event)
         self.__fig.canvas.mpl_connect("key_release_event", self.__cb_key_release_event)
+        self.__fig.canvas.mpl_connect("scroll_event", self.__cb_scroll_event)
 
         # Cyclic update check (but only draws, if there's something new)
         self.__anim: matplotlib.animation.Animation = animation.FuncAnimation(self.__fig, self.__update_window_wrap, interval=100)
@@ -224,6 +225,39 @@ class FilterSimulator(ABC):
             borders = self._frames.calc_limits()
             self._ax.set_xlim(borders.x_min, borders.x_max)
             self._ax.set_ylim(borders.y_min, borders.y_max)
+        # end if
+    # end def
+
+    def __cb_scroll_event(self, event: matplotlib.backend_bases.MouseEvent):
+        base_scale = 1.3
+
+        if event.key == "control":
+            # Get the current x and y limits
+            cur_xlim = self._ax.get_xlim()
+            cur_ylim = self._ax.get_ylim()
+
+            # Get distances from the current cursor position
+            xdata = event.xdata  # Get event x location
+            ydata = event.ydata  # Get event y location
+
+            x_left = xdata - cur_xlim[0]
+            x_right = cur_xlim[1] - xdata
+            y_top = ydata - cur_ylim[0]
+            y_bottom = cur_ylim[1] - ydata
+
+            if event.button == 'up':
+                # Deal with zoom in
+                scale_factor = 1/base_scale
+            else:  # event.button == 'down'
+                # Deal with zoom out
+                scale_factor = base_scale
+            # end if
+
+            # Set new limits
+            self._ax.set_xlim(xdata - x_left * scale_factor, xdata + x_right * scale_factor)
+            self._ax.set_ylim(ydata - y_top * scale_factor, ydata + y_bottom * scale_factor)
+
+            self._ax.figure.canvas.draw()  # force re-draw
         # end if
     # end def
 
