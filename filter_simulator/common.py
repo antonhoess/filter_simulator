@@ -39,6 +39,14 @@ class Limits:
         self.x_max: float = x_max
         self.y_max: float = y_max
     # end def
+
+    def __str__(self):
+        return f"Limits(x_min={self.x_min}, y_min={self.y_min}, x_max={self.x_max}, y_max={self.y_max})"
+    # end def
+
+    def __repr__(self):
+        return str(self)
+    # end def
 # end class
 
 
