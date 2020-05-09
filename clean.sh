@@ -1,5 +1,5 @@
 #!/bin/bash
 
-rm out.lst*
-rm *.mp4*
+gvfs-trash out.lst*
+gvfs-trash *.mp4*
 

@@ -104,6 +104,7 @@ class FilterSimulator(ABC):
         self.__anim = None
         self.__movie_writer = None
         self.__n_video_frames = 0
+        self.__fn_out_video_gen: str = None  # For the generated name
 
     @property
     def fn_out_seq_max(self) -> int:
@@ -194,20 +195,13 @@ class FilterSimulator(ABC):
         # Cyclic update check (but only draws, if there's something new)
         self.__anim: matplotlib.animation.Animation = animation.FuncAnimation(self.__fig, self.__update_window_wrap, interval=100)
 
-        if self.__fn_out_video:
-            self.__fn_out_video = self.get_video_filename()
-
-            if self.__fn_out_video:
-                self.__movie_writer = matplotlib.animation.FFMpegWriter(codec="h264", fps=1, extra_args=["-r", "25", "-f", "mp4"])  # Set output frame rate with using the extra_args
-                self.__movie_writer.setup(fig=self.__fig, outfile=self.__fn_out_video, dpi=300)
-            # end if
-        # end if
+        self.__setup_video()
 
         # Show blocking window which draws the current state and handles mouse clicks
         plt.show()
 
         # Store video to disk using the grabbed frames
-        self.write_video_to_file(self.__fn_out_video)
+        self.__write_video_to_file(self.__fn_out_video_gen)
     # end def
 
     def __cb_button_press_event(self, event: matplotlib.backend_bases.MouseEvent):
@@ -314,15 +308,15 @@ class FilterSimulator(ABC):
         #   * Ctrl+Alt+Shift: Store video
         if event.button == 3:  # Right click
             if WindowModeChecker.key_is_ctrl_shift(event.key):
-                self.write_points_to_file(self.__frames, self.__output_coord_system_conversion)
+                self.__write_points_to_file(self.__frames, self.__output_coord_system_conversion)
 
             elif WindowModeChecker.key_is_ctrl_alt_shift(event.key):
-                self.write_video_to_file(self.__fn_out_video)
+                self.__write_video_to_file(self.__fn_out_video_gen)
 
         # end if
     # end def
 
-    def write_points_to_file(self, frames: FrameList, output_coord_system_conversion: CoordSysConv = CoordSysConv.NONE):
+    def __write_points_to_file(self, frames: FrameList, output_coord_system_conversion: CoordSysConv = CoordSysConv.NONE):
         len_n_seq_max = len(str(self.__fn_out_seq_max))
         filename_format = f"{self.__fn_out}_{{:0{len_n_seq_max}d}}"
         filename_search_format = f"^{re.escape(self.__fn_out)}_(\d{{{len_n_seq_max}}})$"
@@ -345,7 +339,19 @@ class FilterSimulator(ABC):
         # end if
     # end def
 
-    def get_video_filename(self) -> str:
+    def __setup_video(self):
+        if self.__fn_out_video:
+            self.__fn_out_video_gen = self.__get_video_filename()
+
+            if self.__fn_out_video_gen:
+                self.__logging.print_verbose(Logging.INFO, f"Setup new movie writer to file {self.__fn_out_video_gen}")
+                self.__movie_writer = matplotlib.animation.FFMpegWriter(codec="h264", fps=1, extra_args=["-r", "25", "-f", "mp4"])  # Set output frame rate with using the extra_args
+                self.__movie_writer.setup(fig=self.__fig, outfile=self.__fn_out_video_gen, dpi=200)
+            # end if
+        # end if
+    # end def
+
+    def __get_video_filename(self) -> str:
         len_n_seq_max = len(str(self.__fn_out_seq_max))
         filename_format = f"{self.__fn_out_video}_{{:0{len_n_seq_max}d}}"
         filename_search_format = f"^{re.escape(self.__fn_out_video)}_(\d{{{len_n_seq_max}}})$"
@@ -356,12 +362,22 @@ class FilterSimulator(ABC):
         return fn_out
     # end def
 
-    def write_video_to_file(self, fn_out_video: str):
+    def __grab_video_frame(self):
+        if self.__movie_writer:
+            self.__movie_writer.grab_frame()
+            self.__n_video_frames += 1
+        # end if
+    # end def
+
+    def __write_video_to_file(self, fn_out_video: str):
         if self.__movie_writer:
             if fn_out_video:
                 self.__logging.print_verbose(Logging.INFO, "Write video ({} frames) to file {}". format(self.__n_video_frames, fn_out_video))
                 self.__movie_writer.finish()
-                self.__movie_writer = None  # Prevent exception, since it cannot get used anymore
+
+                # Setup for a new video
+                self.__setup_video()
+                self.__grab_video_frame()  # Take the first shot now, since we'll loose it otherwise, as grabbing a frame gets triggert after moving from the current to the next step
             else:
                 self.__logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename {} and a max. sequence number of {}. Try to "
                                                             "remove some old files.".format(self.__fn_out_video, self.__fn_out_seq_max))
@@ -507,7 +523,7 @@ class FilterSimulator(ABC):
                           linestyle="--")
         # end for
 
-        # Visualization settings (need to be set every time since they don't are permanent)
+        # Visualization settings (need to be set every time since they aren't permanent)
         self.__update_window_limits()
 
         self._ax.set_aspect('equal', 'datalim')
@@ -516,10 +532,8 @@ class FilterSimulator(ABC):
         self._ax.set_xlabel('east [m]')
         self._ax.set_ylabel('north [m]')
 
-        if self.__movie_writer:
-            self.__movie_writer.grab_frame()
-            self.__n_video_frames += 1
-        # end if
+        # Grab current frame for creating the output video
+        self.__grab_video_frame()
 
         self.__refresh_finished.set()
     # end def
@@ -532,7 +546,7 @@ class FilterSimulator(ABC):
                 self._cb_keyboard(cmd)
 
             except Exception as e:
-                print("Invalid command. Exception: {}".format(e))
+                self.__logging.print_verbose(Logging.ERROR, "Invalid command. Exception: {}".format(e))
             # end try
         # end while
     # end def

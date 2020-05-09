@@ -206,7 +206,6 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         # cmap = "plasma"
         cmap = "Blues"
 
-        pll = set()
         plot = None
 
         for l, ly in enumerate(self.__draw_layers):
@@ -236,24 +235,21 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
             elif ly == DrawLayer.ALL_DET:
                 # All detections - each frame's detections in a different color
                 for frame in self._frames:
-                    self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=10, edgecolor="green", marker="o", zorder=zorder, label="det. ($t_{0..T}$)" if ly not in pll else None)
-                    pll.add(ly)
+                    self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=10, edgecolor="green", marker="o", zorder=zorder, label="det. ($t_{0..T}$)")
                 # end for
 
             elif ly == DrawLayer.ALL_DET_CONN:
                 # Connections between all detections - only makes sense, if they are manually created or created in a very ordered way, otherwise it's just chaos
                 for frame in self._frames:
-                    self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5, linestyle="--", zorder=zorder, label="conn. det. ($t_{0..T}$)" if ly not in pll else None)
-                    pll.add(ly)
+                    self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5, linestyle="--", zorder=zorder, label="conn. det. ($t_{0..T}$)")
                 # end for
 
             elif ly == DrawLayer.GMM_COV_ELL:
                 if self._cur_frame is not None:
                     # GM-PHD components covariance ellipses
                     for comp in self._gmm:
-                        ell = self.__get_cov_ellipse_from_comp(comp, 1., facecolor='none', edgecolor="black", linewidth=.5, zorder=zorder, label="gmm cov. ell." if ly not in pll else None)
+                        ell = self.__get_cov_ellipse_from_comp(comp, 1., facecolor='none', edgecolor="black", linewidth=.5, zorder=zorder, label="gmm cov. ell.")
                         self._ax.add_patch(ell)
-                        pll.add(ly)
                     # end for
                 # end if
 
@@ -298,7 +294,10 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         if self.__show_legend:
             handler_map = dict()
             handler_map[Ellipse] = HandlerEllipse()
-            legend = self._ax.legend(loc=self.__show_legend, fontsize="xx-small", handler_map=handler_map)
+
+            handles, labels = self._ax.get_legend_handles_labels()  # Easy way to prevent labels appear multiple times (in case where alements are placed in a for loop)
+            by_label = dict(zip(labels, handles))
+            legend = self._ax.legend(by_label.values(), by_label.keys(), loc=self.__show_legend, fontsize="xx-small", handler_map=handler_map)
             legend.set_zorder(len(self.__draw_layers))  # Put the legend on top
         # end if
     # end def
@@ -507,8 +506,6 @@ class GmPhdFilterSimulatorParam:
                "    SIMULATION mode\n" \
                "        In the SIMULATION mode there are following commands:\n" + \
                "        * CTRL + RIGHT CLICK: Navigate forwards (load measurement data of the next time step).\n" + \
-               "        * CTRL + SHIFT + RIGHT CLICK: Stores the current detections (either created manually or by simulation) to the specified output file." \
-               "        * CTRL + ALT + SHIFT + RIGHT CLICK: Stores the plot window frames as video, if its filename got specified." \
                "\n" + \
                "    MANUAL_EDITING mode\n" \
                "        In the MANUAL_EDITING mode there are following commands:\n" + \
@@ -516,7 +513,14 @@ class GmPhdFilterSimulatorParam:
                "        * SHIFT + LEFT CLICK: Add frame.\n" + \
                "        * CTRL + RIGHT CLICK: Remove last set point.\n" + \
                "        * SHIFT + RIGHT CLICK: Remove last frame.\n" + \
-               "        * CTRL + SHIFT + RIGHT CLICK: Stores the current detections (either created manually or by simulation) to the specified output file." \
+               "\n" + \
+               "    Any mode\n" \
+               "        In any mode there are following commands:\n" + \
+               "        * CTRL + SHIFT + RIGHT CLICK: Stores the current detections (either created manually or by simulation) to the specified output file. Attention: the plotting window will " \
+               "change its size back to the size where movie writer (which is the one, that creates the video) got instantiated. This is neccessary, since the frame/figure size needs to be " \
+               "constant. However, immediately before saving the video, the window can be resized to the desired size for capturing the next video, since the next movie writer will use this new " \
+               "window size. This way, at the very beginning after starting the program, the window might get resized to the desired size and then a (more or less) empty video might be saved, " \
+               "which starts a new one on the desired size, directly at the beginning of the simulation.\n" \
                "        * CTRL + ALT + SHIFT + RIGHT CLICK: Stores the plot window frames as video, if its filename got specified." \
                "\n" + \
                ""
