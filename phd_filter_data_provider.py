@@ -308,7 +308,6 @@ class PhdFilterDataProvider(IDataProvider):
     def __init__(self, f: np.ndarray, q: np.ndarray, dt: float, t_max: int, n_birth: int, var_birth: int, n_fa: int, var_fa: int, limits: Limits, p_survival: float, p_detection: float, sigma_vel_x: float, sigma_vel_y: float):
         self.__frame_list: FrameList = FrameList()
         show_visu = False
-        #show_visu = True
         meas_data, ground_truth, _all_objects = Simulator(f, q, dt, t_max, n_birth, var_birth, n_fa, var_fa, limits, p_survival, p_detection, sigma_vel_x, sigma_vel_y, seed=None, show_visu=show_visu).run()
 
         for data in meas_data:

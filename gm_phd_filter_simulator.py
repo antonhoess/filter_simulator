@@ -50,14 +50,14 @@ class DataProviderType(Enum):
 
 class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
     def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv,
-                 fn_out: str, fn_out_video: Optional[str], limits: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
+                 fn_out: str, fn_out_video: Optional[str], auto_step_interval: int, limits: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
                  birth_gmm: List[GmComponent], p_survival: float, p_detection: float,
                  f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, clutter: float,
                  trunc_thresh: float, merge_thresh: float, max_components: int,
                  ext_states_bias: float, ext_states_use_integral: bool,
                  density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int,
                  draw_layers: Optional[List[DrawLayer]]):
-        FilterSimulator.__init__(self, data_provider, output_coord_system_conversion, fn_out, fn_out_video, limits, limits_mode, observer, logging)
+        FilterSimulator.__init__(self, data_provider, output_coord_system_conversion, fn_out, fn_out_video, auto_step_interval, limits, limits_mode, observer, logging)
         GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, clutter=clutter, logging=logging)
 
         self.__trunc_thresh = trunc_thresh
@@ -183,6 +183,9 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
     # end def
 
     def _update_window(self) -> None:
+        self._fig.suptitle("Gm-PHD Filter Simulator")
+        self._ax.set_title(f"Sim-Step: {self._step}, # Est. States: {len(self.__ext_states[-1]) if len(self.__ext_states) > 0 else '-'}, # GMM-Components: {len(self._gmm)}")
+
         for l, ly in enumerate(self.__draw_layers):
             zorder = l
 
@@ -201,7 +204,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
                 elif self.__density_draw_style == DensityDrawStyle.EVAL:
                     x, y, z = self.__calc_density_map(grid_res=self.__n_bins_density_map)
-                    self._ax.contourf(x, y, z, 20, cmap=cmap)
+                    self._ax.contourf(x, y, z, 100, cmap=cmap)
 
                 else:  # DensityDrawStyle.DRAW_HEATMAP
                     samples = self._gmm.samples(self.__n_samples_density_map)
@@ -418,6 +421,10 @@ class GmPhdFilterSimulatorParam:
                "    --sigma_vel_y=SIGMA_VEL_Y:\n" + \
                "    Sets the variance of the velocitiy's initial y-component of a newly born object to SIGMA_VEL_Y.\n" + \
                "\n" + \
+               "    --auto_step_interval=AUTO_STEP_INTERVAL:\n" + \
+               "    Sets the time interval [ms] for automatic stepping of the filter. If value is not set or lower than 0, the automatic mode is not active. " \
+               "Instead the manual stepping mode is active. Default: Not active (= manual mode).\n" + \
+               "\n" + \
                "\n" + \
                "FILE STORAGE\n" \
                "    Stores detection to file.\n" \
@@ -520,6 +527,8 @@ class GmPhdFilterSimulatorParam:
         output_coord_system_conversion: CoordSysConv = CoordSysConv.NONE
         output_video: Optional[str] = None
 
+        auto_step_interval = None
+
         try:
             opts, args = getopt.getopt(argv[1:], "hi:l:o:p:v:", ["help", "data_provider=", "sim_t_max=", "limits=", "limits_mode=", "observer_position=", "verbosity_level=",
                                                                  "birth_gmm=", "n_birth=", "var_birth=", "p_survival=", "p_detection=", "transition_model=", "delta_t=",
@@ -527,7 +536,7 @@ class GmPhdFilterSimulatorParam:
                                                                  "trunc_thresh=", "merge_thresh=", "max_components=",
                                                                  "ext_states_bias=", "ext_states_use_integral=", "density_draw_style=", "n_samples_density_map=", "n_bins_density_map=", "draw_layers=",
                                                                  "input=", "input_coord_system_conversion=", "output=", "output_seq_max=", "output_fill_gaps=", "output_coord_system_conversion=",
-                                                                 "output_video="])
+                                                                 "output_video=", "auto_step_interval="])
 
         except getopt.GetoptError as e:
             print("Reading parameters caused error {}".format(e))
@@ -772,10 +781,13 @@ class GmPhdFilterSimulatorParam:
                 if not isinstance(output_coord_system_conversion, CoordSysConv):
                     err = True
                 # end if
-            # end if
 
             elif opt == "--output_video":
                 output_video = arg
+
+            elif opt == "--auto_step_interval":
+                auto_step_interval = int(arg)
+            # end if
 
             if err or err_msg:
                 print(f"Reading parameter \'{opt}\' caused an error. Argument not provided in correct format.")
@@ -813,7 +825,7 @@ class GmPhdFilterSimulatorParam:
             data_provider = Wgs84ToEnuConverter(data_provider.frame_list, observer)
         # end if
         sim: GmPhdFilterSimulator = GmPhdFilterSimulator(data_provider=data_provider, output_coord_system_conversion=output_coord_system_conversion, fn_out=output, fn_out_video=output_video,
-                                                         limits=limits, limits_mode=limits_mode, observer=observer, logging=verbosity,
+                                                         auto_step_interval=auto_step_interval, limits=limits, limits_mode=limits_mode, observer=observer, logging=verbosity,
                                                          birth_gmm=birth_gmm, p_survival=p_survival, p_detection=p_detection,
                                                          f=f, q=q, h=h, r=r, clutter=clutter,
                                                          trunc_thresh=trunc_thresh, merge_thresh=merge_thresh, max_components=max_components,

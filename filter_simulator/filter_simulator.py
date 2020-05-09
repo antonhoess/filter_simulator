@@ -1,7 +1,6 @@
 from __future__ import annotations
 from typing import Optional, List, Callable
 from abc import ABC, abstractmethod
-import os
 import time
 import threading
 import numpy as np
@@ -12,6 +11,7 @@ import matplotlib.animation as animation
 import matplotlib.backend_bases
 from enum import Enum
 import re
+import datetime
 
 from .common import Logging, SimulationDirection, Limits, Position, Detection, FrameList
 from .window_helper import WindowMode, LimitsMode, WindowModeChecker
@@ -71,22 +71,23 @@ class SimStepPartConf:
 
 
 class FilterSimulator(ABC):
-    def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv, fn_out: str, fn_out_video: Optional[str],
+    def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv, fn_out: str, fn_out_video: Optional[str], auto_step_interval: int,
                  limits: Limits, limits_mode: LimitsMode, observer: Optional[Position], logging: Logging) -> None:
         self.__data_provider = data_provider
         self.__output_coord_system_conversion: CoordSysConv = output_coord_system_conversion
         self.__fn_out: str = fn_out
         self.__fn_out_video: str = fn_out_video
-        self.__step: int = -1
-        self.__next_part_step: bool = False
         self.__frames: FrameList = FrameList()
         self.__simulation_direction: SimulationDirection = SimulationDirection.FORWARD
+        self.__step: int = -1
+        self.__next_part_step: bool = False
+        self.__auto_step_interval = auto_step_interval
         self.__ax: Optional[matplotlib.axes.Axes] = None
+        self.__fig: Optional[matplotlib.pyplot.figure] = None
         self.__logging: Logging = logging
         self.__observer: Position = observer if observer is not None else Position(0, 0)
         self.__observer_is_set = (observer is not None)
-        self.__window_mode_checker: WindowModeChecker = WindowModeChecker(default_window_mode=WindowMode.SIMULATION,
-                                                                          logging=logging)
+        self.__window_mode_checker: WindowModeChecker = WindowModeChecker(default_window_mode=WindowMode.SIMULATION, logging=logging)
         self.__manual_frames: FrameList = FrameList()
         self.__refresh: threading.Event = threading.Event()
         self.__refresh_finished: threading.Event = threading.Event()
@@ -141,6 +142,10 @@ class FilterSimulator(ABC):
         return self.__ax
 
     @property
+    def _fig(self) -> Optional[matplotlib.pyplot.figure]:
+        return self.__fig
+
+    @property
     def _det_borders(self) -> Limits:
         return self.__det_borders
 
@@ -176,25 +181,25 @@ class FilterSimulator(ABC):
         t_kbd.start()
 
         # Prepare GUI
-        fig: plt.Figure = plt.figure()
-        fig.canvas.set_window_title("State Space")
-        self.__ax = fig.add_subplot(1, 1, 1)
+        self.__fig: plt.Figure = plt.figure()
+        self.__fig.canvas.set_window_title("State Space")
+        self.__ax = self.__fig.add_subplot(1, 1, 1)
 
         # self.cid = fig.canvas.mpl_connect('button_press_event', self._cb_button_press_event)
-        fig.canvas.mpl_connect("button_press_event", self.__cb_button_press_event)
-        fig.canvas.mpl_connect("button_release_event", self.__cb_button_release_event)
-        fig.canvas.mpl_connect("key_press_event", self.__cb_key_press_event)
-        fig.canvas.mpl_connect("key_release_event", self.__cb_key_release_event)
+        self.__fig.canvas.mpl_connect("button_press_event", self.__cb_button_press_event)
+        self.__fig.canvas.mpl_connect("button_release_event", self.__cb_button_release_event)
+        self.__fig.canvas.mpl_connect("key_press_event", self.__cb_key_press_event)
+        self.__fig.canvas.mpl_connect("key_release_event", self.__cb_key_release_event)
 
         # Cyclic update check (but only draws, if there's something new)
-        self.__anim: matplotlib.animation.Animation = animation.FuncAnimation(fig, self.__update_window_wrap, interval=100)
+        self.__anim: matplotlib.animation.Animation = animation.FuncAnimation(self.__fig, self.__update_window_wrap, interval=100)
 
         if self.__fn_out_video:
             self.__fn_out_video = self.get_video_filename()
 
             if self.__fn_out_video:
                 self.__movie_writer = matplotlib.animation.FFMpegWriter(codec="h264", fps=1, extra_args=["-r", "25", "-f", "mp4"])  # Set output frame rate with using the extra_args
-                self.__movie_writer.setup(fig=fig, outfile=self.__fn_out_video, dpi=100)
+                self.__movie_writer.setup(fig=self.__fig, outfile=self.__fn_out_video, dpi=300)
             # end if
         # end if
 
@@ -202,7 +207,7 @@ class FilterSimulator(ABC):
         plt.show()
 
         # Store video to disk using the grabbed frames
-        self.write_video_to_file(fn_out_video)
+        self.write_video_to_file(self.__fn_out_video)
     # end def
 
     def __cb_button_press_event(self, event: matplotlib.backend_bases.MouseEvent):
@@ -410,6 +415,14 @@ class FilterSimulator(ABC):
     # end def
 
     def __processing(self) -> None:
+        def time_diff_ms(dt_a: datetime.datetime, dt_b):
+            dt_c = dt_b - dt_a
+
+            return dt_c.seconds * 1000 + dt_c.microseconds / 1000
+
+        # end def
+
+        last_auto_step_time = datetime.datetime.now()
         self.__frames = self.__data_provider.frame_list
 
         if len(self._frames) == 0:
@@ -431,11 +444,20 @@ class FilterSimulator(ABC):
                     self.__refresh_finished.clear()
 
                 elif sp == SimStepPart.WAIT_FOR_TRIGGER:
-                    # Wait for Return-Key-Press (console) or mouse click (GUI)
-                    while not self.__next_part_step:
-                        time.sleep(0.1)
+                    if self.__auto_step_interval is not None and self.__auto_step_interval >= 0:
+                        while time_diff_ms(last_auto_step_time, datetime.datetime.now()) < self.__auto_step_interval:
+                            time.sleep(0.1)
+                        # end while
 
-                    self.__next_part_step = False
+                        last_auto_step_time = datetime.datetime.now()
+                        continue
+                    else:
+                        # Wait for Return-Key-Press (console) or mouse click (GUI)
+                        while not self.__next_part_step:
+                            time.sleep(0.1)
+
+                        self.__next_part_step = False
+                    # end if
 
                 elif sp == SimStepPart.LOAD_NEXT_FRAME:
                     # Only continue when the next requested step is valid, e.g. it is within its boundaries
