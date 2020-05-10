@@ -50,14 +50,14 @@ class PcwConstWhiteAccelModelNd(DynMatrix):
                       [dt * self.__i]])
 
         if len(self.__sigma) == 1:
-            sigma = self.__sigma[0]
+            sigma_squared = self.__sigma[0] ** 2
 
         else:
             v_var = np.array(self.__sigma * 2, ndmin=2)
-            sigma = np.dot(v_var.T, v_var)
+            sigma_squared = np.dot(v_var.T, v_var)
         # end if
 
-        q = np.dot(g, g.T) * sigma
+        q = np.dot(g, g.T) * sigma_squared
 
         return q
     # end dev

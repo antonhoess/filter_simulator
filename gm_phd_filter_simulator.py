@@ -157,9 +157,9 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
         return np.array(vals).reshape(x.shape)
 
-    def __calc_density_map(self, grid_res: int = 100) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        x_: np.ndarray = np.linspace(self.__fov.x_min, self.__fov.x_max, grid_res)
-        y_: np.ndarray = np.linspace(self.__fov.y_min, self.__fov.y_max, grid_res)
+    def __calc_density_map(self, limits: Limits, grid_res: int = 100) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        x_: np.ndarray = np.linspace(limits.x_min, limits.x_max, grid_res)
+        y_: np.ndarray = np.linspace(limits.y_min, limits.y_max, grid_res)
 
         x, y = np.meshgrid(x_, y_)
         z: np.ndarray = np.array(self.__calc_density(x, y))
@@ -192,7 +192,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
     # end def
 
-    def _update_window(self) -> None:
+    def _update_window(self, limits: Limits) -> None:
         class HandlerEllipse(HandlerPatch):
             def create_artists(self, legend, orig_handle, xdescent, ydescent, width, height, fontsize, trans):
                 center = 0.5 * width - 0.5 * xdescent, 0.5 * height - 0.5 * ydescent
@@ -202,8 +202,11 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
                 return [p]
             # end
-
         # end
+
+        if self._step == -1:
+            limits = self.__fov
+        # end if
 
         self._fig.suptitle("Gm-PHD Filter Simulator")
         self._ax.set_title(f"Sim-Step: {self._step}, # Est. States: {len(self.__ext_states[-1]) if len(self.__ext_states) > 0 else '-'}, # GMM-Components: {len(self._gmm)}")
@@ -224,11 +227,12 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                         samples = self._gmm.samples(self.__n_samples_density_map)
                         x = [s[0] for s in samples]
                         y = [s[1] for s in samples]
-                        plot = sns.kdeplot(x, y, shade=True, ax=self._ax, shade_lowest=False, cmap=cmap, zorder=zorder)  # Colorbar instead of label
+                        plot = sns.kdeplot(x, y, shade=True, ax=self._ax, shade_lowest=False, cmap=cmap, cbar=(not self.__colorbar_is_added), zorder=zorder)  # Colorbar instead of label
+                        self.__colorbar_is_added = True
                     # end if
 
                 elif self.__density_draw_style == DensityDrawStyle.EVAL:
-                    x, y, z = self.__calc_density_map(grid_res=self.__n_bins_density_map)
+                    x, y, z = self.__calc_density_map(limits, grid_res=self.__n_bins_density_map)
                     plot = self._ax.contourf(x, y, z, 100, cmap=cmap, zorder=zorder)  # Colorbar instead of label
 
                 else:  # DensityDrawStyle.DRAW_HEATMAP
@@ -236,6 +240,11 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                     det_limits = self._det_limits
                     plot = self._ax.hist2d([s[0] for s in samples], [s[1] for s in samples], bins=self.__n_bins_density_map,
                                            range=[[det_limits.x_min, det_limits.x_max], [det_limits.y_min, det_limits.y_max]], density=False, cmap=cmap, zorder=zorder)  # Colorbar instead of label
+                    # It may make no sense to change the limits, since the sampling happens anyway until infinity in each direction of the
+                    # state space and therefore the bins will be quite empty when zooming in, which results in a poor visualization
+                    # plot = self._ax.hist2d([s[0] for s in samples], [s[1] for s in samples], bins=self.__n_bins_density_map,
+                    #                        range=[[limits.x_min, limits.x_max], [limits.y_min, limits.y_max]], density=False, cmap=cmap, zorder=zorder)  # Colorbar instead of label
+                    plot = plot[3]  # Get the image itself
                 # end if
 
             elif ly == DrawLayer.FOV:

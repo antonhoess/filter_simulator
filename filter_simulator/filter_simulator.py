@@ -393,25 +393,27 @@ class FilterSimulator(ABC):
     # end def
 
     def __write_points_to_file(self, frames: FrameList, output_coord_system_conversion: CoordSysConv = CoordSysConv.NONE):
-        len_n_seq_max = len(str(self.__fn_out_seq_max))
-        filename_format = f"{self.__fn_out}_{{:0{len_n_seq_max}d}}"
-        filename_search_format = f"^{re.escape(self.__fn_out)}_(\d{{{len_n_seq_max}}})$"
+        if self.__fn_out is not None:
+            len_n_seq_max = len(str(self.__fn_out_seq_max))
+            filename_format = f"{self.__fn_out}_{{:0{len_n_seq_max}d}}"
+            filename_search_format = f"^{re.escape(self.__fn_out)}_(\d{{{len_n_seq_max}}})$"
 
-        fn_out = FileWriter.get_next_sequence_filename(".", filename_format=filename_format, filename_search_format=filename_search_format,
-                                                       n_seq_max=self.__fn_out_seq_max, fill_gaps=self.__fn_out_fill_gaps)
+            fn_out = FileWriter.get_next_sequence_filename(".", filename_format=filename_format, filename_search_format=filename_search_format,
+                                                           n_seq_max=self.__fn_out_seq_max, fill_gaps=self.__fn_out_fill_gaps)
 
-        if fn_out is not None:
-            self.__logging.print_verbose(Logging.INFO,
-                                         "Write points ({} frames with {} detections) to file {}".
-                                         format(len(frames),
-                                                frames.get_number_of_detections(), fn_out))
+            if fn_out is not None:
+                self.__logging.print_verbose(Logging.INFO,
+                                             "Write points ({} frames with {} detections) to file {}".
+                                             format(len(frames),
+                                                    frames.get_number_of_detections(), fn_out))
 
-            file_writer = FileWriter(fn_out)
-            file_writer.write(frames, self.__observer, output_coord_system_conversion)
-        else:
-            self.__logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename "
-                                                        "{} and a max. sequence number of {}. Try to "
-                                                        "remove some old files.".format(self.__fn_out, self.__fn_out_seq_max))
+                file_writer = FileWriter(fn_out)
+                file_writer.write(frames, self.__observer, output_coord_system_conversion)
+            else:
+                self.__logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename "
+                                                            "{} and a max. sequence number of {}. Try to "
+                                                            "remove some old files.".format(self.__fn_out, self.__fn_out_seq_max))
+            # end if
         # end if
     # end def
 
@@ -604,7 +606,6 @@ class FilterSimulator(ABC):
     def __update_window_wrap(self, _frame: Optional[int] = None) -> None:
         # This should block all subsequent calls to update_windows, but should be no problem
         timed_out = not self.__refresh.wait(50. / 1000)
-
         self.__refresh.clear()
 
         if self._ax is None or timed_out:
@@ -618,7 +619,7 @@ class FilterSimulator(ABC):
         self._ax.clear()
 
         # Filter dependent function
-        self._update_window()
+        self._update_window(limits=Limits(self.__prev_lim.x_min, self.__prev_lim.y_min, self.__prev_lim.x_max, self.__prev_lim.y_max))
 
         # Manually set points
         for frame in self.__manual_frames:
@@ -660,7 +661,7 @@ class FilterSimulator(ABC):
         pass
 
     @abstractmethod
-    def _update_window(self) -> None:
+    def _update_window(self, limits: Limits) -> None:
         pass
 
     def _cb_keyboard(self, cmd: str) -> None:  # Can be overloaded
