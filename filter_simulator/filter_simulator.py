@@ -71,6 +71,18 @@ class SimStepPartConf:
 # end class
 
 
+class DragStart:
+    def __init__(self, x: float, y: float, x_lim, y_lim, ax_size):
+        self.x = x
+        self.y = y
+        self.x_lim = x_lim
+        self.y_lim = y_lim
+        self.x_scale = (self.x_lim[1] - self.x_lim[0]) / ax_size[0]
+        self.y_scale = (self.y_lim[1] - self.y_lim[0]) / ax_size[1]
+    # end def
+# end class
+
+
 class FilterSimulator(ABC):
     def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv, fn_out: str, fn_out_video: Optional[str], auto_step_interval: int,
                  fov: Limits, limits_mode: LimitsMode, observer: Optional[Position], logging: Logging) -> None:
@@ -106,6 +118,8 @@ class FilterSimulator(ABC):
         self.__movie_writer = None
         self.__n_video_frames = 0
         self.__fn_out_video_gen: Optional[str] = None  # For the generated name
+
+        self.__drag_start = None
 
     @property
     def fn_out_seq_max(self) -> int:
@@ -193,6 +207,7 @@ class FilterSimulator(ABC):
         self.__fig.canvas.mpl_connect("key_press_event", self.__cb_key_press_event)
         self.__fig.canvas.mpl_connect("key_release_event", self.__cb_key_release_event)
         self.__fig.canvas.mpl_connect("scroll_event", self.__cb_scroll_event)
+        self.__fig.canvas.mpl_connect("motion_notify_event", self.__cb_motion_notify_event)
 
         # Cyclic update check (but only draws, if there's something new)
         self.__anim: matplotlib.animation.Animation = animation.FuncAnimation(self.__fig, self.__update_window_wrap, interval=100)
@@ -210,8 +225,16 @@ class FilterSimulator(ABC):
         self.__window_mode_checker.check_event(action="button_press_event", event=event)
         self.__handle_mpl_event(event)
 
+        if event.button == 1 and event.key == "control":  # Left click
+            self.__drag_start = DragStart(event.x, event.y, self._ax.get_xlim(), self._ax.get_ylim(), self.__get_ax_size())
+        # end if
+
     def __cb_button_release_event(self, event: matplotlib.backend_bases.MouseEvent):
         self.__window_mode_checker.check_event(action="button_release_event", event=event)
+
+        if event.button == 1:  # Left click
+            self.__drag_start = None
+        # end if
 
     def __cb_key_press_event(self, event: matplotlib.backend_bases.KeyEvent):
         self.__window_mode_checker.check_event(action="key_press_event", event=event)
@@ -247,7 +270,7 @@ class FilterSimulator(ABC):
 
             if event.button == 'up':
                 # Deal with zoom in
-                scale_factor = 1/base_scale
+                scale_factor = 1 / base_scale
             else:  # event.button == 'down'
                 # Deal with zoom out
                 scale_factor = base_scale
@@ -258,6 +281,24 @@ class FilterSimulator(ABC):
             self._ax.set_ylim(ydata - y_top * scale_factor, ydata + y_bottom * scale_factor)
 
             self._ax.figure.canvas.draw()  # force re-draw
+        # end if
+    # end def
+
+    def __get_ax_size(self):
+        bbox = self.__ax.get_window_extent().transformed(self.__fig.dpi_scale_trans.inverted())
+        width, height = bbox.width, bbox.height
+        width *= self.__fig.dpi
+        height *= self.__fig.dpi
+
+        return width, height
+    # end def
+
+    def __cb_motion_notify_event(self, event: matplotlib.backend_bases.KeyEvent):
+        if self.__drag_start:
+            diff_x = (event.x - self.__drag_start.x) * self.__drag_start.x_scale
+            diff_y = (event.y - self.__drag_start.y) * self.__drag_start.y_scale
+            self._ax.set_xlim(self.__drag_start.x_lim[0] - diff_x, self.__drag_start.x_lim[1] - diff_x)
+            self._ax.set_ylim(self.__drag_start.y_lim[0] - diff_y, self.__drag_start.y_lim[1] - diff_y)
         # end if
     # end def
 

@@ -464,8 +464,9 @@ class GmPhdFilterSimulatorConfig:
                "window size. This way, at the very beginning after starting the program, the window might get resized to the desired size and then a (more or less) empty video might be saved, " \
                "which starts a new one on the desired size, directly at the beginning of the simulation.\n" \
                "        * CTRL + ALT + SHIFT + RIGHT CLICK: Stores the plot window frames as video, if its filename got specified." \
-               "        * CTRL * WHEEL UP: Zooms in." \
-               "        * CTRL * WHEEL DOWN: Zooms out."
+               "        * CTRL + WHEEL UP: Zooms in." \
+               "        * CTRL + WHEEL DOWN: Zooms out." \
+               "        * CTRL + LEFT MOUSE DOWN + MOUSE MOVE: Moves the whole scene with the mouse cursor."
     # end def
 
     def __init__(self):
