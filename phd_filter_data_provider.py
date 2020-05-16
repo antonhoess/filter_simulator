@@ -141,6 +141,8 @@ class Simulator:
         if num == 0:
             return 0
 
+        # If alpha and beta are not set (and therefore calculated automatically - see below), not only the
+        # Poisson and Binomial distribution are smooth at the borders, but also the Negative binomial one.
         c_is_set = alpha is not None and beta is not None
 
         if num == var:  # Poisson
@@ -261,7 +263,7 @@ class Simulator:
             # Clutter
             #########
             # Determine number of clutter
-            n_clu = self.__sample_from_discrete_distribution(num=self.n_fa, var=self.var_fa, alpha=1, beta=1)  # XXX No idea, what alpha and beta are for
+            n_clu = self.__sample_from_discrete_distribution(num=self.n_fa, var=self.var_fa)
 
             # Add clutter (as false measurements) to measurements
             for _ in range(n_clu):

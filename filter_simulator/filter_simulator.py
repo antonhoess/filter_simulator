@@ -85,7 +85,7 @@ class DragStart:
 
 class FilterSimulator(ABC):
     def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv, fn_out: str, fn_out_video: Optional[str], auto_step_interval: int,
-                 fov: Limits, limits_mode: LimitsMode, observer: Optional[Position], logging: Logging) -> None:
+                 auto_step_autostart: bool, fov: Limits, limits_mode: LimitsMode, observer: Optional[Position], logging: Logging) -> None:
         self.__data_provider = data_provider
         self.__output_coord_system_conversion: CoordSysConv = output_coord_system_conversion
         self.__fn_out: str = fn_out
@@ -94,7 +94,8 @@ class FilterSimulator(ABC):
         self.__simulation_direction: SimulationDirection = SimulationDirection.FORWARD
         self.__step: int = -1
         self.__next_part_step: bool = False
-        self.__auto_step_interval = auto_step_interval
+        self.__auto_step_interval: int = auto_step_interval
+        self.__auto_step: bool = auto_step_autostart  # Only sets the initial value, which can be changed later on
         self.__ax: Optional[matplotlib.axes.Axes] = None
         self.__fig: Optional[matplotlib.pyplot.figure] = None
         self.__logging: Logging = logging
@@ -120,6 +121,7 @@ class FilterSimulator(ABC):
         self.__fn_out_video_gen: Optional[str] = None  # For the generated name
 
         self.__drag_start = None
+        self.__auto_step_toggled_on: bool = False  # This is neccessary, since the program waits in the manual stepping mode for a keyboard or mouse action for the next simulation step
 
     @property
     def fn_out_seq_max(self) -> int:
@@ -225,8 +227,19 @@ class FilterSimulator(ABC):
         self.__window_mode_checker.check_event(action="button_press_event", event=event)
         self.__handle_mpl_event(event)
 
-        if event.button == 1 and event.key == "control":  # Left click
-            self.__drag_start = DragStart(event.x, event.y, self._ax.get_xlim(), self._ax.get_ylim(), self.__get_ax_size())
+        if event.button == 1:  # Left click
+            if event.key == "control":
+                self.__drag_start = DragStart(event.x, event.y, self._ax.get_xlim(), self._ax.get_ylim(), self.__get_ax_size())
+
+            elif event.key == "shift":
+                self.__auto_step = not self.__auto_step
+
+                self.__logging.print_verbose(Logging.INFO, f"Automatic stepping {'activated' if self.__auto_step else 'deactivated'}.")
+
+                if self.__auto_step:
+                    self.__auto_step_toggled_on = True
+                # end if
+            # end if
         # end if
 
     def __cb_button_release_event(self, event: matplotlib.backend_bases.MouseEvent):
@@ -566,7 +579,7 @@ class FilterSimulator(ABC):
                     self.__refresh_finished.clear()
 
                 elif sp == SimStepPart.WAIT_FOR_TRIGGER:
-                    if self.__auto_step_interval is not None and self.__auto_step_interval >= 0:
+                    if self.__auto_step and self.__auto_step_interval >= 0:
                         while time_diff_ms(last_auto_step_time, datetime.datetime.now()) < self.__auto_step_interval:
                             time.sleep(0.1)
                         # end while
@@ -575,9 +588,10 @@ class FilterSimulator(ABC):
                         continue
                     else:
                         # Wait for Return-Key-Press (console) or mouse click (GUI)
-                        while not self.__next_part_step:
+                        while not (self.__next_part_step or self.__auto_step_toggled_on):
                             time.sleep(0.1)
 
+                        self.__auto_step_toggled_on = False
                         self.__next_part_step = False
                     # end if
 
@@ -606,10 +620,13 @@ class FilterSimulator(ABC):
     def __update_window_wrap(self, _frame: Optional[int] = None) -> None:
         # This should block all subsequent calls to update_windows, but should be no problem
         timed_out = not self.__refresh.wait(50. / 1000)
-        self.__refresh.clear()
 
         if self._ax is None or timed_out:
             return
+
+        # Needs to be cleared only, if we are sure, that the timeout happened, since wait() can timeout,
+        # but the flag could be set anyway (just the moment after this threads finished with wait())
+        self.__refresh.clear()
 
         # Store current limits for resetting it the next time
         # (after drawing the elements, which might unwantedly change the limits)

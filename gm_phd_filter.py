@@ -373,7 +373,7 @@ g.gmm
 [(float(comp.loc), comp.weight) for comp in g.gmm]
     """
 
-    def __init__(self, birth_gmm: List[GmComponent], survival: float, detection: float, f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, clutter: float, logging: Logging = Logging.INFO):
+    def __init__(self, birth_gmm: List[GmComponent], survival: float, detection: float, f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, p_fa: float, logging: Logging = Logging.INFO):
         """
           'birthgmm' is an array of GmphdComponent items which makes up
                the GMM of birth probabilities.
@@ -383,29 +383,81 @@ g.gmm
           'q' is the process noise covariance Q.
           'h' is the observation matrix H.
           'r' is the observation noise covariance R.
-          'clutter' is the clutter intensity.
+          'p_fa' is the p_fa intensity.
           """
-        self._gmm: Gmm = Gmm()                   # Empty - things will need to be born before we observe them
-        self.__birth_gmm = birth_gmm
+        self.__gmm: Gmm = Gmm()                   # Empty - things will need to be born before we observe them
+        self.__birth_gmm: Gmm = Gmm(birth_gmm)
         self.__survival = np.float64(survival)    # p_{s,k}(x) in paper
         self.__detection = np.float64(detection)  # p_{d,k}(x) in paper
         self.__f = np.array(f, dtype=np.float64)  # State transition matrix      (F_k-1 in paper)
         self.__q = np.array(q, dtype=np.float64)  # Process noise covariance     (Q_k-1 in paper)
         self.__h = np.array(h, dtype=np.float64)  # Observation matrix           (H_k in paper)
         self.__r = np.array(r, dtype=np.float64)  # Observation noise covariance (R_k in paper)
-        self.__clutter = np.float64(clutter)      # Clutter intensity (KAU in paper)
+        self.__p_fa = np.float64(p_fa)            # Clutter intensity (KAU in paper)
 
         self.__logging = logging
         self.__cur_frame: Optional[Frame] = None
     # end def
 
     @property
+    def _gmm(self) -> Gmm:
+        return self.__gmm
+    # end def
+
+    @_gmm.setter
+    def _gmm(self, value: Gmm) -> None:
+        self.__gmm = value
+    # end def
+
+    @property
+    def _birth_gmm(self) -> Gmm:
+        return self.__birth_gmm
+    # end def
+
+    # @_birth_gmm.setter
+    # def _birth_gmm(self, value: Gmm) -> None:
+    #     self.__birth_gmm = value
+    # # end def
+
+    @property
+    def _p_s(self) -> float:
+        return self.__survival
+    # end def
+
+    @property
+    def _p_d(self) -> float:
+        return self.__detection
+    # end def
+
+    @property
+    def _f(self) -> np.ndarray:
+        return self.__f
+    # end def
+
+    @property
+    def _q(self) -> np.ndarray:
+        return self.__q
+    # end def
+
+    @property
+    def _h(self) -> np.ndarray:
+        return self.__h
+    # end def
+
+    @property
+    def _r(self) -> np.ndarray:
+        return self.__r
+    # end def
+
+    @property
     def _cur_frame(self) -> Optional[Frame]:
         return self.__cur_frame
+    # end def
 
     @_cur_frame.setter
     def _cur_frame(self, value: Optional[Frame]) -> None:
         self.__cur_frame = value
+    # end def
 
     def _predict_and_update(self, observations):
         """Run a single GM-PHD step given a new frame of observations.
@@ -414,15 +466,16 @@ g.gmm
         # Step 1 - prediction for birth targets
         #######################################
         born: Gmm = Gmm([deepcopy(comp) for comp in self.__birth_gmm])
-        # The original paper would do a spawning iteration as part of Step 1.
+        # The original paper would do a spawning iteration as part of step 1.
         spawned = Gmm()  # XXX not implemented
 
         # Step 2 - prediction for existing targets
         ##########################################
         updated: Gmm = Gmm()
-        for comp in self._gmm:
-            updated.add_comp(GmComponent(self.__survival * comp.weight, np.dot(self.__f, comp.loc),  # Motion model: x = F * x
-                                         np.dot(np.dot(self.__f, comp.cov), self.__f.T) + self.__q))  # Covariance matrix: P = F * P * F.T + Q
+        for comp in self.__gmm:
+            updated.add_comp(GmComponent(weight=self.__survival * comp.weight,
+                                         loc=np.dot(self.__f, comp.loc),  # Motion model: x = F * x
+                                         cov=np.dot(np.dot(self.__f, comp.cov), self.__f.T) + self.__q))  # Covariance matrix: P = F * P * F.T + Q
         # end for
 
         predicted: Gmm = born + spawned + updated
@@ -460,13 +513,13 @@ g.gmm
 
             # The Kappa thing (clutter and reweight)
             weight_sum = new_gmm_partial.get_total_weight()
-            reweighter = 1. / (self.__clutter + weight_sum)
+            reweighter = 1. / (self.__p_fa + weight_sum)
             new_gmm_partial.mult_comp_weight(reweighter)
 
             new_gmm += new_gmm_partial
         # end for
 
-        self._gmm = new_gmm
+        self.__gmm = new_gmm
 
     def _prune(self, trunc_thresh=1e-6, merge_thresh=0.01, max_components=100):
         """Prune the GMM. Alters model state.
@@ -476,12 +529,12 @@ g.gmm
         trunc_len: int = 0
 
         # Truncation is easy
-        source_gmm: Gmm = Gmm([comp for comp in list(filter(lambda comp: comp.weight > trunc_thresh, self._gmm))])
+        source_gmm: Gmm = Gmm([comp for comp in list(filter(lambda comp: comp.weight > trunc_thresh, self.__gmm))])
 
-        weight_sums.append(self._gmm.get_total_weight())  # Diagnostic
+        weight_sums.append(self.__gmm.get_total_weight())  # Diagnostic
         weight_sums.append(source_gmm.get_total_weight())
         if self.__logging >= Logging.INFO:
-            orig_len = len(self._gmm)
+            orig_len = len(self.__gmm)
             trunc_len = len(source_gmm)
         # end if
 
@@ -512,18 +565,18 @@ g.gmm
 
         # Now ensure the number of components is within the limit, keeping the weightiest
         new_gmm.sort(key=lambda comp: comp.weight, reverse=True)
-        self._gmm = Gmm(new_gmm[:max_components])
+        self.__gmm = Gmm(new_gmm[:max_components])
 
         weight_sums.append(new_gmm.get_total_weight())
-        weight_sums.append(self._gmm.get_total_weight())
+        weight_sums.append(self.__gmm.get_total_weight())
         if self.__logging >= Logging.DEBUG:
-            self.__logging.print("prune(): %i -> %i -> %i -> %i" % (orig_len, trunc_len, len(new_gmm), len(self._gmm)))
+            self.__logging.print("prune(): %i -> %i -> %i -> %i" % (orig_len, trunc_len, len(new_gmm), len(self.__gmm)))
             self.__logging.print("prune(): weight_sums %g -> %g -> %g -> %g" % (weight_sums[0], weight_sums[1], weight_sums[2], weight_sums[3]))
         # end if
 
         # Pruning should not alter the total weightsum (which relates to total num items) - so we renormalize
         weight_norm = weight_sums[0] / weight_sums[3]  # Not in the original paper
-        self._gmm.mult_comp_weight(weight_norm)
+        self.__gmm.mult_comp_weight(weight_norm)
 
     def _extract_states(self, bias: float = 1.0, use_integral: bool = False):
         if not use_integral:
@@ -547,9 +600,9 @@ g.gmm
         items = []
 
         self.__logging.print_verbose(Logging.DEBUG, "weights:")
-        self.__logging.print_verbose(Logging.DEBUG, str([round(comp.weight, 7) for comp in self._gmm]))
+        self.__logging.print_verbose(Logging.DEBUG, str([round(comp.weight, 7) for comp in self.__gmm]))
 
-        for comp in self._gmm:
+        for comp in self.__gmm:
             val = comp.weight * bias
 
             if val > .5:
@@ -565,11 +618,11 @@ g.gmm
         This is NOT in the GMPHD paper; added by Dan.
         "bias" is a multiplier for the est number of items.
         """
-        num_to_add = int(round(bias * self._gmm.get_total_weight()))
+        num_to_add = int(round(bias * self.__gmm.get_total_weight()))
         self.__logging.print_verbose(Logging.DEBUG, "bias is %g, num_to_add is %i" % (bias, num_to_add))
 
         # A temporary list of peaks p will gradually be decimated as we steal from its highest peaks
-        peaks = [GmComponent(comp.weight, comp.loc, None) for comp in self._gmm]
+        peaks = [GmComponent(comp.weight, comp.loc, None) for comp in self.__gmm]
 
         items = []
         while num_to_add > 0:
