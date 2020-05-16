@@ -1,4 +1,6 @@
 .idea
 __pycache__
-out.lst*
+*.lst*
 *.mp4*
+venv
+*.png

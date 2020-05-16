@@ -9,7 +9,7 @@ from datetime import datetime
 from matplotlib.patches import Ellipse, Rectangle
 from matplotlib.legend_handler import HandlerPatch
 import seaborn as sns
-from enum import Enum
+from enum import Enum, IntEnum
 import argparse
 from distutils.util import strtobool
 # import os
@@ -22,11 +22,11 @@ from filter_simulator.data_provider_interface import IDataProvider
 from filter_simulator.data_provider_converter import CoordSysConv, Wgs84ToEnuConverter
 from filter_simulator.dyn_matrix import TransitionModel, PcwConstWhiteAccelModelNd
 from gm_phd_filter import GmPhdFilter, GmComponent, Gmm
-from phd_filter_data_provider import PhdFilterDataProvider
+from phd_filter_data_provider import PhdFilterDataProvider, BirthDistribution
 from filter_simulator.window_helper import LimitsMode
 
 
-class DrawLayer(Enum):
+class DrawLayer(IntEnum):
     DENSITY_MAP = 0
     FOV = 1
     BIRTH_AREA = 2
@@ -37,6 +37,16 @@ class DrawLayer(Enum):
     EST_STATE = 7
     ALL_EST_STATE = 8
     CUR_DET = 9
+# end class
+
+
+class PhdFilterSimStepPart(Enum):
+    DRAW = 0  # Draw the current scene
+    WAIT_FOR_TRIGGER = 1  # Wait for user input to continue with the next step
+    LOAD_NEXT_FRAME = 2  # Load the next data (frame)
+    USER_PREDICT_AND_UPDATE = 3
+    USER_PRUNE = 4
+    USER_EXTRACT_STATES = 5
 # end class
 
 
@@ -58,13 +68,16 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
     def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv,
                  fn_out: str, fn_out_video: Optional[str], auto_step_interval: int, auto_step_autostart: bool, fov: Limits, birth_area: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
                  birth_gmm: List[GmComponent], p_survival: float, p_detection: float,
-                 f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, p_fa: float,
+                 f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, rho_fa: float, gate_thresh: Optional[float],
                  trunc_thresh: float, merge_thresh: float, max_components: int,
                  ext_states_bias: float, ext_states_use_integral: bool,
                  density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int,
-                 draw_layers: Optional[List[DrawLayer]], show_legend: Optional[Union[int, str]], show_colorbar: bool):
-        FilterSimulator.__init__(self, data_provider, output_coord_system_conversion, fn_out, fn_out_video, auto_step_interval, auto_step_autostart, fov, limits_mode, observer, logging)
-        GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, p_fa=p_fa, logging=logging)
+                 draw_layers: Optional[List[DrawLayer]], sim_loop_step_parts: List[PhdFilterSimStepPart], show_legend: Optional[Union[int, str]], show_colorbar: bool, start_window_max: bool):
+
+        self.__sim_loop_step_parts: List[PhdFilterSimStepPart] = sim_loop_step_parts  # Needs to be set before calling the contructor of the FilterSimulator, since it already needs this values there
+
+        FilterSimulator.__init__(self, data_provider, output_coord_system_conversion, fn_out, fn_out_video, auto_step_interval, auto_step_autostart, fov, limits_mode, observer, start_window_max, logging)
+        GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, rho_fa=rho_fa, gate_thresh=gate_thresh, logging=logging)
 
         self.__trunc_thresh = trunc_thresh
         self.__merge_thresh = merge_thresh
@@ -76,29 +89,49 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         self.__n_bins_density_map = n_bins_density_map
         self.__logging: Logging = logging
         self.__draw_layers: Optional[List[DrawLayer]] = draw_layers if draw_layers is not None else [ly for ly in DrawLayer]
+        self.__active_draw_layers: List[bool] = [layer in self.__draw_layers for layer in DrawLayer]
         self.__show_legend: Optional[Union[int, str]] = show_legend
         self.__show_colorbar: bool = show_colorbar
         self.__fov: Limits = fov
         self.__birth_area: Limits = birth_area
-
         self.__ext_states: List[List[np.ndarray]] = []
         self.__colorbar_is_added = False
+        self.__last_step_part: str = "Initialized"
 
     def _set_sim_loop_step_part_conf(self):
         # Configure the processing steps
         sim_step_part_conf = SimStepPartConf()
 
-        sim_step_part_conf.add_user_step(self.__sim_loop_predict_and_update)
-        sim_step_part_conf.add_user_step(self.__sim_loop_prune)
-        sim_step_part_conf.add_user_step(self.__sim_loop_extract_states)
-        sim_step_part_conf.add_draw_step()
-        sim_step_part_conf.add_wait_for_trigger_step()
-        sim_step_part_conf.add_load_next_frame_step()
+        for step_part in self.__sim_loop_step_parts:
+            if step_part is PhdFilterSimStepPart.DRAW:
+                sim_step_part_conf.add_draw_step()
+
+            elif step_part is PhdFilterSimStepPart.WAIT_FOR_TRIGGER:
+                sim_step_part_conf.add_wait_for_trigger_step()
+
+            elif step_part is PhdFilterSimStepPart.LOAD_NEXT_FRAME:
+                sim_step_part_conf.add_load_next_frame_step()
+
+            elif step_part is PhdFilterSimStepPart.USER_PREDICT_AND_UPDATE:
+                sim_step_part_conf.add_user_step(self.__sim_loop_predict_and_update)
+
+            elif step_part is PhdFilterSimStepPart.USER_PRUNE:
+                sim_step_part_conf.add_user_step(self.__sim_loop_prune)
+
+            elif step_part is PhdFilterSimStepPart.USER_EXTRACT_STATES:
+                sim_step_part_conf.add_user_step(self.__sim_loop_extract_states)
+
+            else:
+                raise ValueError
+            # end if
+        # end for
 
         return sim_step_part_conf
     # end def
 
     def __sim_loop_predict_and_update(self):
+        self.__last_step_part = "Predict + Update"
+
         if self._step < 0:
             self._predict_and_update([])
 
@@ -112,6 +145,8 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
     # end def
 
     def __sim_loop_prune(self):
+        self.__last_step_part = "Prune"
+
         if self._step >= 0:
             # Prune
             self._prune(trunc_thresh=self.__trunc_thresh, merge_thresh=self.__merge_thresh, max_components=self.__max_components)
@@ -119,6 +154,8 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
     # end def
 
     def __sim_loop_extract_states(self):
+        self.__last_step_part = "Extract States"
+
         if self._step >= 0:
             # Extract states
             ext_states = self._extract_states(bias=self.__ext_states_bias, use_integral=self.__ext_states_use_integral)
@@ -154,7 +191,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         # Code taken from eval_grid_2d()
         points = np.stack((x, y), axis=-1).reshape(-1, 2)
 
-        vals = self.__gmm.eval_list(points, which_dims=(0, 1))
+        vals = self._gmm.eval_list(points, which_dims=(0, 1))
 
         return np.array(vals).reshape(x.shape)
 
@@ -210,7 +247,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         # end if
 
         self._fig.suptitle("Gm-PHD Filter Simulator")
-        self._ax.set_title(f"Sim-Step: {self._step if self._step >= 0 else '-'}, # Est. States: {len(self.__ext_states[-1]) if len(self.__ext_states) > 0 else '-'}, # GMM-Components: {len(self._gmm)}")
+        self._ax.set_title(f"Sim-Step: {self._step if self._step >= 0 else '-'}, Sim-SubStep: {self.__last_step_part}, # Est. States: {len(self.__ext_states[-1]) if len(self.__ext_states) > 0 else '-'}, # GMM-Components: {len(self._gmm)}")
 
         # cmap = "Greys"
         # cmap = "plasma"
@@ -219,6 +256,9 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         plot = None
 
         for l, ly in enumerate(self.__draw_layers):
+            if not self.__active_draw_layers[ly]:
+                continue
+
             zorder = l
 
             if ly == DrawLayer.DENSITY_MAP:
@@ -282,7 +322,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
             elif ly == DrawLayer.GMM_COV_ELL:
                 if self._cur_frame is not None:
                     # GM-PHD components covariance ellipses
-                    for comp in self.__gmm:
+                    for comp in self._gmm:
                         ell = self.__get_cov_ellipse_from_comp(comp, 1., facecolor='none', edgecolor="black", linewidth=.5, zorder=zorder, label="gmm cov. ell.")
                         self._ax.add_patch(ell)
                     # end for
@@ -291,15 +331,17 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
             elif ly == DrawLayer.GMM_COV_MEAN:
                 if self._cur_frame is not None:
                     # GM-PHD components means
-                    self._ax.scatter([comp.loc[0] for comp in self.__gmm], [comp.loc[1] for comp in self.__gmm], s=5, edgecolor="blue", marker="o", zorder=zorder, label="gmm comp. mean")
+                    self._ax.scatter([comp.loc[0] for comp in self._gmm], [comp.loc[1] for comp in self._gmm], s=5, edgecolor="blue", marker="o", zorder=zorder, label="gmm comp. mean")
                 # end if
 
             elif ly == DrawLayer.EST_STATE:
                 if self._cur_frame is not None:
                     # Estimated states
-                    est_items = self.__ext_states[-1]
-                    self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=100, c="gray", edgecolor="black", alpha=.5, marker="o", zorder=zorder,
-                                     label="est. states ($t_k$)")
+                    if len(self.__ext_states) > 0:
+                        est_items = self.__ext_states[-1]
+                        self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=100, c="gray", edgecolor="black", alpha=.5, marker="o", zorder=zorder,
+                                         label="est. states ($t_k$)")
+                    # end if
                 # end if
 
             elif ly == DrawLayer.ALL_EST_STATE:
@@ -340,12 +382,29 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
     # end def
 
     def _cb_keyboard(self, cmd: str) -> None:
+        fields = cmd.split()
+
         if cmd == "":
             self._next_part_step = True
 
         elif cmd == "h":
             print(GmPhdFilterSimulatorConfig().help())
 
+        elif len(fields) > 0 and fields[0] == "l":
+            if len(fields) > 1:
+                try:
+                    layer = int(fields[1])
+                    self.__active_draw_layers[layer] = not self.__active_draw_layers[layer]
+                    print(f"Layer {DrawLayer(layer).name} {'de' if not self.__active_draw_layers[layer] else ''}activated.")
+                    self._refresh.set()
+                except ValueError:
+                    pass
+                # end try
+            else:
+                for layer in range(len(list(DrawLayer))):
+                    print(f"{'+' if self.__active_draw_layers[layer] else ' '} ({'{:2d}'.format(layer)}) {DrawLayer(layer).name}")
+                # end for
+            # end if
         else:
             pass
         # end if
@@ -531,11 +590,11 @@ class GmPhdFilterSimulatorConfig:
                "constant. However, immediately before saving the video, the window can be resized to the desired size for capturing the next video, since the next movie writer will use this new " \
                "window size. This way, at the very beginning after starting the program, the window might get resized to the desired size and then a (more or less) empty video might be saved, " \
                "which starts a new one on the desired size, directly at the beginning of the simulation.\n" \
-               "        * CTRL + ALT + SHIFT + RIGHT CLICK: Stores the plot window frames as video, if its filename got specified." \
-               "        * CTRL + WHEEL UP: Zooms in." \
-               "        * CTRL + WHEEL DOWN: Zooms out." \
-               "        * CTRL + LEFT MOUSE DOWN + MOUSE MOVE: Moves the whole scene with the mouse cursor." \
-               "        * SHIFT + LEFT CLICK: Moves the whole scene with the mouse cursor."
+               "        * CTRL + ALT + SHIFT + RIGHT CLICK: Stores the plot window frames as video, if its filename got specified.\n" \
+               "        * CTRL + WHEEL UP: Zooms in.\n" \
+               "        * CTRL + WHEEL DOWN: Zooms out.\n" \
+               "        * CTRL + LEFT MOUSE DOWN + MOUSE MOVE: Moves the whole scene with the mouse cursor.\n" \
+               "        * SHIFT + LEFT CLICK: De-/activate automatic stepping."
     # end def
 
     def __init__(self):
@@ -549,7 +608,7 @@ class GmPhdFilterSimulatorConfig:
                            help="Shows this help and exits the program.")
 
         group.add_argument("--data_provider", action=self._EvalAction, comptype=DataProviderType, choices=[str(t) for t in DataProviderType], default=DataProviderType.FILE_READER,
-                           help="Sets the data provider type that defines the data source. DataProviderType.FILE_READER reads lines from file defined in --input_file, "
+                           help="Sets the data provider type that defines the data source. DataProviderType.FILE_READER reads lines from file defined in --input, "
                                 "DataProviderType.SIMULATOR simulates the PHD behaviour defined by the parameters given in section SIMULATOR).")
 
         group.add_argument("--fov", metavar=("X_MIN", "Y_MIN", "X_MAX", "Y_MAX"), action=self._LimitsAction, type=float, nargs=4, default=Limits(-10, -10, 10, 10),
@@ -571,23 +630,23 @@ class GmPhdFilterSimulatorConfig:
         group.add_argument("--birth_gmm", action=self._EvalListToTypeAction, comptype=GmComponent, restype=Gmm, default=Gmm([GmComponent(0.1, [0, 0], np.eye(2) * 10. ** 2)]),
                            help="List ([]) of GmComponent which defines the birth-GMM. Format for a single GmComponent: GmComponent(weight, mean, covariance_matrix).")
 
-        group.add_argument("--p_survival", metavar="[0.0 - 1.0]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, 1.), default=.9,
+        group.add_argument("--p_survival", metavar="[>0.0 - 1.0]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, 1.), default=.9,
                            help="Sets the survival probability for the PHD from time step k to k+1.")
 
-        group.add_argument("--n_birth", metavar="[1-N]", type=GmPhdFilterSimulatorConfig.InRange(int, 1, None), default=1,
+        group.add_argument("--n_birth", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(int, 1, None), default=1,
                            help="Sets the mean number of newly born objects in each step to N_BIRTH.")
 
-        group.add_argument("--var_birth", metavar="[1-N]", type=GmPhdFilterSimulatorConfig.InRange(int, 1, None), default=1,
+        group.add_argument("--var_birth", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(int, 1, None), default=1,
                            help="Sets the variance of newly born objects to VAR_BIRTH.")
 
-        group.add_argument("--p_detection", metavar="[0.0 - 1.0]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, 1.), default=.9,
+        group.add_argument("--p_detection", metavar="[>0.0 - 1.0]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, 1.), default=.9,
                            help="Sets the (sensor's) detection probability for the measurements.")
 
         group.add_argument("--transition_model", action=self._EvalAction, comptype=TransitionModel, choices=[str(t) for t in TransitionModel], default=TransitionModel.INDIVIDUAL,
                            help="Sets the transition model. If set to TransitionModel.INDIVIDUAL, the matrices F (see paraemter --mat_f) and Q (see paraemter --mat_q) need to be specified. "
                                 "PCW_CONST_WHITE_ACC_MODEL_2xND stands for Piecewise Constant Acceleration Model.")
 
-        group.add_argument("--delta_t", metavar="[0.0 - N]", dest="dt", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=1.,
+        group.add_argument("--delta_t", metavar="[>0.0 - N]", dest="dt", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=1.,
                            help="Sets the time betwen two measurements to DELTA_T. Does not work with the --transition_model parameter set to TransitionModel.INDIVIDUAL.")
 
         group.add_argument("--mat_f", dest="f", action=self._EvalAction, comptype=np.ndarray, default=np.eye(2),
@@ -610,20 +669,23 @@ class GmPhdFilterSimulatorConfig:
                            help="Sets the variance of the acceleration's y-component to calculate the process noise covariance_matrix Q. Only evaluated when using the "
                                 "TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND (see parameter --transition_model) and in this case ignores the value specified for Q (see parameter --mat_q).")
 
-        group.add_argument("--p_fa", metavar="[0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=None,
-                           help="Sets the probability of false alarms per volume unit to P_FA. If specified, the mean number of false alarms (see parameter --n_fa) will be recalculated "
-                                "based on P_FA and the FoV. ")
+        group.add_argument("--gate_thresh", metavar="[0.0 - 1.0]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, 1.), default=None,
+                           help="Sets the confidence threshold for chi^2 gating on new measurements to GATE_THRESH.")
 
-        group.add_argument("--trunc_thresh", metavar="[0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=1e-6,
+        group.add_argument("--rho_fa", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=None,
+                           help="Sets the probability of false alarms per volume unit to RHO_FA. If specified, the mean number of false alarms (see parameter --n_fa) will be recalculated "
+                                "based on RHO_FA and the FoV. ")
+
+        group.add_argument("--trunc_thresh", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=1e-6,
                            help="Sets the truncation threshold for the prunging step. GM components with weights lower than this value get directly removed.")
 
-        group.add_argument("--merge_thresh", metavar="[0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=.01,
+        group.add_argument("--merge_thresh", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=.01,
                            help="Sets the merge threshold for the prunging step. GM components with a Mahalanobis distance lower than this value get merged.")
 
         group.add_argument("--max_components", metavar="[1 - N]", type=GmPhdFilterSimulatorConfig.InRange(int, 1, None), default=100,
                            help="Sets the max. number of Gm components used for the GMM representing the current PHD.")
 
-        group.add_argument("--ext_states_bias", metavar="[0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=1.,
+        group.add_argument("--ext_states_bias", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=1.,
                            help="Sets the bias for extracting the current states. It works as a factor for the GM component's weights and is used, "
                                 "in case the weights are too small to reach a value higher than 0.5, which in needed to get extracted as a state.")
 
@@ -639,17 +701,31 @@ class GmPhdFilterSimulatorConfig:
         group.add_argument("--sim_t_max",  metavar="[0 - N]", type=GmPhdFilterSimulatorConfig.InRange(int, 0, None), default=50,
                            help="Sets the number of simulation steps to SIM_T_MAX when using the DataProviderType.SIMULATOR (see parameter --data_provider).")
 
-        group.add_argument("--n_fa", metavar="[0-N]", type=GmPhdFilterSimulatorConfig.InRange(int, 0, None), default=1,
+        group.add_argument("--n_fa", metavar="[0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, 0, None), default=1.,
                            help="Sets the mean number of false alarms in the FoV to N_FA.")
 
-        group.add_argument("--var_fa", metavar="[0-N]", type=GmPhdFilterSimulatorConfig.InRange(int, 0, None),  default=1,
+        group.add_argument("--var_fa", metavar="[0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, 0, None),  default=1.,
                            help="Sets the variance of false alarms in the FoV to VAR_FA.")
 
+        group.add_argument("--birth_dist", action=self._EvalAction, comptype=BirthDistribution, choices=[str(t) for t in BirthDistribution], default=BirthDistribution.UNIFORM_AREA,
+                           help="Sets the type of probability distribution for new born objects. In case BirthDistribution.UNIFORM_AREA is set, the newly born objects are distributed uniformly "
+                                "over the area defined by the parameter --birth_area (or the FoV if not set) and the initial velocity will be set to the values defineed by the perameters "
+                                "--sigma_vel_x and --sigma_vel_y. If BirthDistribution.GMM_FILTER is set, the same GMM will get used for the creating of new objects, as the filter uses for their "
+                                "detection. This parameter only takes effect when the parameter --data_provider is set to DataProviderType.SIMULATOR.")
+
         group.add_argument("--sigma_vel_x", metavar="[0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=.2,
-                           help="Sets the variance of the velocitiy's initial x-component of a newly born object to SIGMA_VEL_X.")
+                           help="Sets the variance of the velocitiy's initial x-component of a newly born object to SIGMA_VEL_X. Only takes effect if the parameter --birth_dist is set to "
+                                "BirthDistribution.UNIFORM_AREA.")
 
         group.add_argument("--sigma_vel_y", metavar="[0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=.2,
-                           help="Sets the variance of the velocitiy's initial y-component of a newly born object to SIGMA_VEL_y.")
+                           help="Sets the variance of the velocitiy's initial y-component of a newly born object to SIGMA_VEL_y. Only takes effect if the parameter --birth_dist is set to "
+                                "BirthDistribution.UNIFORM_AREA.")
+
+        group.add_argument("--sim_loop_step_parts", metavar=f"[{{{  ','.join([str(t) for t in PhdFilterSimStepPart]) }}}*]", action=self._EvalListAction, comptype=PhdFilterSimStepPart,
+                           default=[PhdFilterSimStepPart.USER_PREDICT_AND_UPDATE, PhdFilterSimStepPart.USER_PRUNE, PhdFilterSimStepPart.USER_EXTRACT_STATES,
+                                    PhdFilterSimStepPart.DRAW, PhdFilterSimStepPart.WAIT_FOR_TRIGGER, PhdFilterSimStepPart.LOAD_NEXT_FRAME],
+                           help=f"Sets the loops step parts and their order. This determindes how the main loop in the simulation behaves, when the current state is drawn, the user can interact, "
+                           f"etc. Be cautious that some elements need to be present to make the program work (see default value)!")
 
         group.add_argument("--auto_step_interval", metavar="[0 - N]", type=GmPhdFilterSimulatorConfig.InRange(int, 0, None), default=0,
                            help="Sets the time interval [ms] for automatic stepping of the filter.")
@@ -701,10 +777,9 @@ class GmPhdFilterSimulatorConfig:
         group.add_argument("--n_bins_density_map", metavar="[100-N]", type=GmPhdFilterSimulatorConfig.InRange(int, 100, None),  default=100,
                            help="Sets the number bins for drawing the PHD density map. A good number might be 100.")
 
-        group.add_argument("--draw_layers", action=self._EvalListAction, comptype=DrawLayer,
+        group.add_argument("--draw_layers", metavar=f"[{{{  ','.join([str(t) for t in DrawLayer]) }}}*]", action=self._EvalListAction, comptype=DrawLayer,
                            default=None,
                            help=f"Sets the list of drawing layers. Allows to draw only the required layers and in the desired order. If not set, all layers are drawn in a fixed order. "
-                           f"Possible values are: {[str(t) for t in DrawLayer]}\n"
                            "Example 1: [DrawLayer.DENSITY_MAP, DrawLayer.EST_STATE]\n"
                            "Example 2: [layer for layer in DrawLayer if not layer == DrawLayer.GMM_COV_ELL and not layer == DrawLayer.GMM_COV_MEAN]")
 
@@ -715,6 +790,9 @@ class GmPhdFilterSimulatorConfig:
 
         group.add_argument("--show_colorbar", type=GmPhdFilterSimulatorConfig.IsBool, nargs="?", default=True, const=False, choices=[True, False, 1, 0],
                            help="Specifies, if the colorbar should be shown.")
+
+        group.add_argument("--start_window_max", type=GmPhdFilterSimulatorConfig.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
+                           help="Specifies, if the plotting window will be maximized at program start. Works only if the parameter --output_video is not set.")
     # end def __init__
 
     def help(self) -> str:
@@ -766,11 +844,11 @@ def main(argv: List[str]):
         return (fov.x_max - fov.x_min) * (fov.y_max - fov.y_min)
     # end def
 
-    if not args.p_fa:
-        args.p_fa = args.n_fa / get_state_space_volume_from_fov(args.fov)
+    if not args.rho_fa:
+        args.rho_fa = args.n_fa / get_state_space_volume_from_fov(args.fov)
     else:
         factor = float(args.var_fa) / args.n_fa
-        args.n_fa = int(args.p_fa * get_state_space_volume_from_fov(args.fov))
+        args.n_fa = int(args.rho_fa * get_state_space_volume_from_fov(args.fov))
         args.var_fa = int(args.n_fa * factor)
     # end if
 
@@ -785,7 +863,8 @@ def main(argv: List[str]):
     else:  # data_provider == DataProviderType.SIMULATOR
         data_provider = PhdFilterDataProvider(f=args.f, q=args.q, dt=args.dt, t_max=args.sim_t_max, n_birth=args.n_birth, var_birth=args.var_birth, n_fa=args.n_fa, var_fa=args.var_fa,
                                               fov=args.fov, birth_area=args.birth_area,
-                                              p_survival=args.p_survival, p_detection=args.p_detection, sigma_vel_x=args.sigma_vel_x, sigma_vel_y=args.sigma_vel_y)
+                                              p_survival=args.p_survival, p_detection=args.p_detection, birth_dist=args.birth_dist, sigma_vel_x=args.sigma_vel_x, sigma_vel_y=args.sigma_vel_y,
+                                              birth_gmm=args.birth_gmm)
     # end if
 
     # Convert data from certain coordinate systems to ENU, which is used internally
@@ -797,11 +876,11 @@ def main(argv: List[str]):
                                                      auto_step_interval=args.auto_step_interval, auto_step_autostart=args.auto_step_autostart, fov=args.fov, birth_area=args.birth_area,
                                                      limits_mode=args.limits_mode, observer=args.observer, logging=args.verbosity,
                                                      birth_gmm=args.birth_gmm, p_survival=args.p_survival, p_detection=args.p_detection,
-                                                     f=args.f, q=args.q, h=args.h, r=args.r, p_fa=args.p_fa,
+                                                     f=args.f, q=args.q, h=args.h, r=args.r, rho_fa=args.rho_fa, gate_thresh=args.gate_thresh,
                                                      trunc_thresh=args.trunc_thresh, merge_thresh=args.merge_thresh, max_components=args.max_components,
                                                      ext_states_bias=args.ext_states_bias, ext_states_use_integral=args.ext_states_use_integral,
                                                      density_draw_style=args.density_draw_style, n_samples_density_map=args.n_samples_density_map, n_bins_density_map=args.n_bins_density_map,
-                                                     draw_layers=args.draw_layers, show_legend=args.show_legend, show_colorbar=args.show_colorbar)
+                                                     draw_layers=args.draw_layers, sim_loop_step_parts=args.sim_loop_step_parts, show_legend=args.show_legend, show_colorbar=args.show_colorbar, start_window_max=args.start_window_max)
 
     sim.fn_out_seq_max = args.output_seq_max
     sim.fn_out_fill_gaps = args.output_fill_gaps

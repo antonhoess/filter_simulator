@@ -85,7 +85,7 @@ class DragStart:
 
 class FilterSimulator(ABC):
     def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv, fn_out: str, fn_out_video: Optional[str], auto_step_interval: int,
-                 auto_step_autostart: bool, fov: Limits, limits_mode: LimitsMode, observer: Optional[Position], logging: Logging) -> None:
+                 auto_step_autostart: bool, fov: Limits, limits_mode: LimitsMode, observer: Optional[Position], start_window_max: bool, logging: Logging) -> None:
         self.__data_provider = data_provider
         self.__output_coord_system_conversion: CoordSysConv = output_coord_system_conversion
         self.__fn_out: str = fn_out
@@ -101,6 +101,7 @@ class FilterSimulator(ABC):
         self.__logging: Logging = logging
         self.__observer: Position = observer if observer is not None else Position(0, 0)
         self.__observer_is_set = (observer is not None)
+        self.__start_window_max: bool = start_window_max
         self.__window_mode_checker: WindowModeChecker = WindowModeChecker(default_window_mode=WindowMode.SIMULATION, logging=logging)
         self.__manual_frames: FrameList = FrameList()
         self.__refresh: threading.Event = threading.Event()
@@ -122,6 +123,10 @@ class FilterSimulator(ABC):
 
         self.__drag_start = None
         self.__auto_step_toggled_on: bool = False  # This is neccessary, since the program waits in the manual stepping mode for a keyboard or mouse action for the next simulation step
+
+    @property
+    def _refresh(self) -> threading.Event:
+        return self.__refresh
 
     @property
     def fn_out_seq_max(self) -> int:
@@ -216,6 +221,13 @@ class FilterSimulator(ABC):
 
         self.__setup_video()
 
+        # Maximize the plotting window at program start
+        if self.__start_window_max and self.__fn_out_video is None:
+            fig_manager = plt.get_current_fig_manager()
+            if hasattr(fig_manager, 'window'):
+                fig_manager.window.showMaximized()
+        # end if
+
         # Show blocking window which draws the current state and handles mouse clicks
         plt.show()
 
@@ -230,15 +242,6 @@ class FilterSimulator(ABC):
         if event.button == 1:  # Left click
             if event.key == "control":
                 self.__drag_start = DragStart(event.x, event.y, self._ax.get_xlim(), self._ax.get_ylim(), self.__get_ax_size())
-
-            elif event.key == "shift":
-                self.__auto_step = not self.__auto_step
-
-                self.__logging.print_verbose(Logging.INFO, f"Automatic stepping {'activated' if self.__auto_step else 'deactivated'}.")
-
-                if self.__auto_step:
-                    self.__auto_step_toggled_on = True
-                # end if
             # end if
         # end if
 
@@ -395,7 +398,20 @@ class FilterSimulator(ABC):
         # Right mouse button:
         #   * Ctrl+Shift: Store detections
         #   * Ctrl+Alt+Shift: Store video
-        if event.button == 3:  # Right click
+
+        if event.button == 1:  # Left click
+            if event.key == "shift":
+                self.__auto_step = not self.__auto_step
+
+                self.__logging.print_verbose(Logging.INFO, f"Automatic stepping {'activated' if self.__auto_step else 'deactivated'}.")
+
+                if self.__auto_step:
+                    self.__auto_step_toggled_on = True
+                # end if
+            # end if
+        # end if
+
+        elif event.button == 3:  # Right click
             if WindowModeChecker.key_is_ctrl_shift(event.key):
                 self.__write_points_to_file(self.__frames, self.__output_coord_system_conversion)
 
@@ -415,17 +431,13 @@ class FilterSimulator(ABC):
                                                            n_seq_max=self.__fn_out_seq_max, fill_gaps=self.__fn_out_fill_gaps)
 
             if fn_out is not None:
-                self.__logging.print_verbose(Logging.INFO,
-                                             "Write points ({} frames with {} detections) to file {}".
-                                             format(len(frames),
-                                                    frames.get_number_of_detections(), fn_out))
+                self.__logging.print_verbose(Logging.INFO, "Write points ({} frames with {} detections) to file {}". format(len(frames), frames.get_number_of_detections(), fn_out))
 
                 file_writer = FileWriter(fn_out)
                 file_writer.write(frames, self.__observer, output_coord_system_conversion)
             else:
-                self.__logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename "
-                                                            "{} and a max. sequence number of {}. Try to "
-                                                            "remove some old files.".format(self.__fn_out, self.__fn_out_seq_max))
+                self.__logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename {} and a max. sequence number of {}. Try to remove some old files.".
+                                             format(self.__fn_out, self.__fn_out_seq_max))
             # end if
         # end if
     # end def
@@ -554,7 +566,6 @@ class FilterSimulator(ABC):
             dt_c = dt_b - dt_a
 
             return dt_c.seconds * 1000 + dt_c.microseconds / 1000
-
         # end def
 
         last_auto_step_time = datetime.datetime.now()

@@ -31,6 +31,7 @@ from copy import deepcopy
 import re
 import random
 from collections import Counter
+from scipy.stats.distributions import chi2
 
 from filter_simulator.common import Logging, Frame
 
@@ -373,7 +374,8 @@ g.gmm
 [(float(comp.loc), comp.weight) for comp in g.gmm]
     """
 
-    def __init__(self, birth_gmm: List[GmComponent], survival: float, detection: float, f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, p_fa: float, logging: Logging = Logging.INFO):
+    def __init__(self, birth_gmm: List[GmComponent], survival: float, detection: float, f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray,
+                 rho_fa: float, gate_thresh: Optional[float], logging: Logging = Logging.INFO):
         """
           'birthgmm' is an array of GmphdComponent items which makes up
                the GMM of birth probabilities.
@@ -393,7 +395,8 @@ g.gmm
         self.__q = np.array(q, dtype=np.float64)  # Process noise covariance     (Q_k-1 in paper)
         self.__h = np.array(h, dtype=np.float64)  # Observation matrix           (H_k in paper)
         self.__r = np.array(r, dtype=np.float64)  # Observation noise covariance (R_k in paper)
-        self.__p_fa = np.float64(p_fa)            # Clutter intensity (KAU in paper)
+        self.__rho_fa = np.float64(rho_fa)        # Clutter intensity (KAU in paper)
+        self.__gate_thresh = chi2.ppf(gate_thresh, df=f.shape[0]) if gate_thresh else None  # Calculate the inverse chi^2
 
         self.__logging = logging
         self.__cur_frame: Optional[Frame] = None
@@ -485,10 +488,12 @@ g.gmm
         # These two are the mean and covariance of the expected observation
         nu = [np.dot(self.__h, comp.loc) for comp in predicted]  # nu = H * x # H (observation model) maps the true state space into the observed space
         s = [np.dot(np.dot(self.__h, comp.cov), self.__h.T) + self.__r for comp in predicted]  # Innovation covariance: S = H * P * H.T + R
+        s_inv = [np.linalg.inv(s_) for s_ in s] if self.__gate_thresh else None  # Computationally expensive and will get used many times below
 
         # Not sure about any physical interpretation of these two...
         k = [np.dot(np.dot(comp.cov, self.__h.T), np.linalg.inv(s[index])) for index, comp in enumerate(predicted)]  # Kalman Gain: K = P * H.T * S^{-1}
         p = [np.dot(np.eye(len(k[index])) - np.dot(k[index], self.__h), comp.cov) for index, comp in enumerate(predicted)]  # Updated (a posteriori) estimate covariance: P = (I - K * H) * P
+        # If there's numeric instability, the Joseph's form might get used: P = (I - K * H) * P * (I - K * H).T + K * R * K.T
 
         # Step 4 - update using observations
         ####################################
@@ -502,18 +507,29 @@ g.gmm
             new_gmm_partial = Gmm()
 
             for j, comp in enumerate(predicted):
-                # weight: depending on how good the measurement hits the GM component's mean
+                y = obs - nu[j]  # Kalman Innovation Residual: y = z - H * x
+
+                # Gating
+                if self.__gate_thresh:
+                    gate = np.dot(np.dot(y, s_inv[j]), y.T)
+
+                    if gate > self.__gate_thresh:
+                        continue  # Discard the combination if the hypothesis location x is outside of the threshold around the measurement z
+                    # end if
+                # end if
+
+                # weight: Depending on how good the measurement hits the GM component's mean
                 # loc: Updated (a posteriori) state estimate
                 new_gmm_partial.add_comp(GmComponent(
                     weight=self.__detection * GmComponent(comp.weight, loc=nu[j], cov=s[j]).eval_at(obs),
-                    loc=comp.loc + np.dot(k[j], obs - nu[j]),
+                    loc=comp.loc + np.dot(k[j], y),
                     cov=p[j])
                 )
             # end for
 
             # The Kappa thing (clutter and reweight)
             weight_sum = new_gmm_partial.get_total_weight()
-            reweighter = 1. / (self.__p_fa + weight_sum)
+            reweighter = 1. / (self.__rho_fa + weight_sum)
             new_gmm_partial.mult_comp_weight(reweighter)
 
             new_gmm += new_gmm_partial
