@@ -21,7 +21,7 @@ from filter_simulator.filter_simulator import FilterSimulator, SimStepPartConf
 from filter_simulator.data_provider_interface import IDataProvider
 from filter_simulator.data_provider_converter import CoordSysConv, Wgs84ToEnuConverter
 from filter_simulator.dyn_matrix import TransitionModel, PcwConstWhiteAccelModelNd
-from gm_phd_filter import GmPhdFilter, GmComponent, Gmm
+from gm_phd_filter import GmPhdFilter, GmComponent, Gmm, DistMeasure
 from phd_filter_data_provider import PhdFilterDataProvider, BirthDistribution
 from filter_simulator.window_helper import LimitsMode
 
@@ -69,7 +69,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                  fn_out: str, fn_out_video: Optional[str], auto_step_interval: int, auto_step_autostart: bool, fov: Limits, birth_area: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
                  birth_gmm: List[GmComponent], p_survival: float, p_detection: float,
                  f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, rho_fa: float, gate_thresh: Optional[float],
-                 trunc_thresh: float, merge_thresh: float, max_components: int,
+                 trunc_thresh: float, merge_dist_measure: DistMeasure, merge_thresh: float, max_components: int,
                  ext_states_bias: float, ext_states_use_integral: bool,
                  density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int,
                  draw_layers: Optional[List[DrawLayer]], sim_loop_step_parts: List[PhdFilterSimStepPart], show_legend: Optional[Union[int, str]], show_colorbar: bool, start_window_max: bool):
@@ -80,6 +80,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, rho_fa=rho_fa, gate_thresh=gate_thresh, logging=logging)
 
         self.__trunc_thresh = trunc_thresh
+        self.__merge_dist_measure = merge_dist_measure
         self.__merge_thresh = merge_thresh
         self.__max_components = max_components
         self.__ext_states_bias = ext_states_bias
@@ -149,7 +150,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
         if self._step >= 0:
             # Prune
-            self._prune(trunc_thresh=self.__trunc_thresh, merge_thresh=self.__merge_thresh, max_components=self.__max_components)
+            self._prune(trunc_thresh=self.__trunc_thresh, merge_dist_measure=self.__merge_dist_measure, merge_thresh=self.__merge_thresh, max_components=self.__max_components)
         # end if
     # end def
 
@@ -679,8 +680,13 @@ class GmPhdFilterSimulatorConfig:
         group.add_argument("--trunc_thresh", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=1e-6,
                            help="Sets the truncation threshold for the prunging step. GM components with weights lower than this value get directly removed.")
 
+        group.add_argument("--merge_dist_measure", action=self._EvalAction, comptype=DistMeasure, choices=[str(t) for t in DistMeasure],
+                           default=DistMeasure.MAHALANOBIS_MOD,
+                           help="Defines the measurement for calculating the distance between two GMM components.")
+
         group.add_argument("--merge_thresh", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=.01,
-                           help="Sets the merge threshold for the prunging step. GM components with a Mahalanobis distance lower than this value get merged.")
+                           help="Sets the merge threshold for the prunging step. GM components with a distance distance lower than this value get merged. The distacne measure is given by the "
+                                "parameter --merge_dist_measure and depending in this parameter the threashold needs to be set differently.")
 
         group.add_argument("--max_components", metavar="[1 - N]", type=GmPhdFilterSimulatorConfig.InRange(int, 1, None), default=100,
                            help="Sets the max. number of Gm components used for the GMM representing the current PHD.")
@@ -736,16 +742,16 @@ class GmPhdFilterSimulatorConfig:
         # File Reader group
         group = self.__parser.add_argument_group("File Reader - reads detections from file")
 
-        group.add_argument("--input", metavar="INPUT_FILE", default="No file.", help="Parse detections with coordinates from INPUT_FILE.")
+        group.add_argument("--input", default="No file.", help="Parse detections with coordinates from INPUT_FILE.")
 
-        group.add_argument("--input_coord_system_conversion", metavar="INPUT_COORD_SYSTEM", action=self._EvalAction, comptype=CoordSysConv, choices=[str(t) for t in CoordSysConv],
+        group.add_argument("--input_coord_system_conversion", action=self._EvalAction, comptype=CoordSysConv, choices=[str(t) for t in CoordSysConv],
                            default=CoordSysConv.NONE,
-                           help="Defines the coordinates-conversion of the provided values from the INPUT_COORD_SYSTEM into the internal system (ENU).")
+                           help="Defines the coordinates-conversion of the provided cordinate system into the internal system (ENU).")
 
         # File Storage group
         group = self.__parser.add_argument_group("File Storage - stores data as detections and videos to file")
 
-        group.add_argument("--output", metavar="OUTPUT_FILE", default=None,
+        group.add_argument("--output", default=None,
                            help="Sets the output file to store the (manually set or simulated) detections' coordinates to OUTPUT_FILE. Default: out.lst.")
 
         group.add_argument("--output_seq_max", type=int, default=9999,
@@ -815,7 +821,6 @@ class GmPhdFilterSimulatorConfig:
 
 
 def main(argv: List[str]):
-
     # Library settings
     sns.set(color_codes=True)
 
@@ -877,7 +882,7 @@ def main(argv: List[str]):
                                                      limits_mode=args.limits_mode, observer=args.observer, logging=args.verbosity,
                                                      birth_gmm=args.birth_gmm, p_survival=args.p_survival, p_detection=args.p_detection,
                                                      f=args.f, q=args.q, h=args.h, r=args.r, rho_fa=args.rho_fa, gate_thresh=args.gate_thresh,
-                                                     trunc_thresh=args.trunc_thresh, merge_thresh=args.merge_thresh, max_components=args.max_components,
+                                                     trunc_thresh=args.trunc_thresh, merge_dist_measure=args.merge_dist_measure, merge_thresh=args.merge_thresh, max_components=args.max_components,
                                                      ext_states_bias=args.ext_states_bias, ext_states_use_integral=args.ext_states_use_integral,
                                                      density_draw_style=args.density_draw_style, n_samples_density_map=args.n_samples_density_map, n_bins_density_map=args.n_bins_density_map,
                                                      draw_layers=args.draw_layers, sim_loop_step_parts=args.sim_loop_step_parts, show_legend=args.show_legend, show_colorbar=args.show_colorbar, start_window_max=args.start_window_max)

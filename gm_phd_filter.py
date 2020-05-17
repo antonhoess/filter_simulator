@@ -32,8 +32,16 @@ import re
 import random
 from collections import Counter
 from scipy.stats.distributions import chi2
+from enum import Enum
 
 from filter_simulator.common import Logging, Frame
+
+
+class DistMeasure(Enum):
+    MAHALANOBIS_MOD = 0
+    HELLINGER = 1
+    BHATTACHARYYA = 2
+# end class
 
 
 class GmComponent:
@@ -87,9 +95,29 @@ class GmComponent:
 
         return density
 
-    # Mahalanobis distance
-    def calc_dist_to(self, comp: GmComponent):
-        return float(np.dot(np.dot((comp.loc - self.loc).T, comp.__invcov), comp.loc - self.loc))
+    # Caluclate the distance measure between two distributions
+    # Alternatively use package 'dictances'? Maybe this does not handle the covariances?
+    # See https://jneuroengrehab.biomedcentral.com/articles/10.1186/s12984-017-0283-5/tables/2
+    def calc_dist_to(self, comp: GmComponent, dist_measure: DistMeasure = DistMeasure.MAHALANOBIS_MOD):
+        s1 = self.cov
+        s2 = comp.cov
+        s = .5 * (s1 + s2)
+        diff = self.loc - comp.loc
+        diff = np.dot(np.dot(diff.T, np.linalg.inv(s)), diff)
+        dist = None
+
+        if dist_measure is DistMeasure.MAHALANOBIS_MOD:  # Modified Mahalanobis
+            dist = .5 * np.sqrt(diff)
+
+        elif dist_measure is DistMeasure.HELLINGER:
+            dist = 1 - (np.power(np.linalg.det(s1), .25) * np.power(np.linalg.det(s2), .25)) / np.sqrt(np.linalg.det(s1)) * np.exp(-0.125 * diff)
+
+        elif dist_measure is DistMeasure.BHATTACHARYYA:
+            dist = np.sqrt(.125 * diff - .5 * np.log(np.linalg.det(s) / np.sqrt(np.linalg.det(s1) * np.linalg.det(s2))))
+        # end if
+
+        return float(dist)
+    # end def
 
     def get_with_reduced_dims(self, which_dims: List[int]):
         dim_size = len(self.loc)
@@ -537,7 +565,7 @@ g.gmm
 
         self.__gmm = new_gmm
 
-    def _prune(self, trunc_thresh=1e-6, merge_thresh=0.01, max_components=100):
+    def _prune(self, trunc_thresh: float = 1e-6, merge_dist_measure: DistMeasure = DistMeasure.MAHALANOBIS_MOD, merge_thresh: float = 0.01, max_components: int = 100):
         """Prune the GMM. Alters model state.
           Based on Table 2 from Vo and Ma paper."""
         weight_sums: List[float] = list()
@@ -556,20 +584,20 @@ g.gmm
 
         # Iterate to build the new GMM
         new_gmm: Gmm = Gmm()
-
+        print(len(source_gmm))
         while len(source_gmm) > 0:
             # Find weightiest old component and pull it out
             w_index = int(np.argmax([comp.weight for comp in source_gmm]))
             weightiest: GmComponent = source_gmm.pop(w_index)
 
             # Find all nearby ones and pull them out
-            distances = [weightiest.calc_dist_to(comp) for comp in source_gmm]
+            distances = [weightiest.calc_dist_to(comp, merge_dist_measure) for comp in source_gmm]
             do_subsume = np.array([dist <= merge_thresh for dist in distances])
             subsumed_gmm: Gmm = Gmm([weightiest])
 
             if np.any(do_subsume):
-                self.__logging.print_verbose(Logging.DEBUG, "Subsuming the following locations into weightest with loc %s and weight %g (cov %s):" %
-                                             (','.join([str(x) for x in weightiest.loc.flat]), weightiest.weight, ','.join([str(x) for x in weightiest.cov.flat])))
+                self.__logging.print_verbose(Logging.DEBUG, f"Subsuming the following locations into weightest with loc {','.join([str(x) for x in weightiest.loc.flat])} and weight "
+                                                            f"{weightiest.weight} (cov {','.join([str(x) for x in weightiest.cov.flat])}):")
                 self.__logging.print_verbose(Logging.DEBUG, str(list([comp.loc[0] for comp in list(np.array(source_gmm.get_comps())[do_subsume])])))
                 subsumed_gmm.add_comps(list(np.array(source_gmm.get_comps())[do_subsume]))
                 source_gmm = Gmm(list(np.array(source_gmm.get_comps())[~do_subsume]))
