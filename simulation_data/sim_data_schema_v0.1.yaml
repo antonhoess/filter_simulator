@@ -1,0 +1,99 @@
+type: map
+mapping:
+  meta-information: # A set of meta informations.
+    required: yes
+    type: map
+    mapping:
+      version: # Specifies, which version this schema has.
+        required: yes
+        type: str
+        pattern: "1.0"
+      number-steps: # Specifies, how many steps the simulation data consist of.
+        required: yes
+        type: int
+        range: {min-ex: 0}
+      coordinate-system: # Specifies the coordinate system in which these data are created. Neccessary for transforming it to the internally used coordinate system.
+        required: no
+        type: str
+        enum:
+        - "ENU" # Default
+        - "WGS84"
+      time-delta: # Specifies the time passed between the time steps k-1 and k. Used for predicting the targets based on their motion matrix. Default: 1. Values in /time-delta will overwrite this value, if they are set.
+        required: no
+        type: float
+        range: {min-ex: .0}
+
+  detections: # List of frames, where each frame holds the detections for a specific time step.
+    required: yes
+    type: seq
+    sequence: # List of frames.
+    - type: seq
+      sequence:  # List of detections within the current frame.
+      - type: map
+        mapping:
+          x:
+            required: yes
+            type: float
+          y:
+            required: yes
+            type: float
+
+  missed-detections: # List of frames, where each frame holds the missed detections for a specific time step.
+    required: no
+    type: seq
+    sequence: # List of frames.
+    - type: seq
+      sequence:  # List of detections within the current frame.
+      - type: map
+        mapping:
+          x:
+            required: yes
+            type: float
+          y:
+            required: yes
+            type: float
+
+  false-alarms: # List of frames, where each frame holds the false alarms for a specific time step.
+    required: no
+    type: seq
+    sequence: # List of frames.
+    - type: seq
+      sequence:  # List of detections within the current frame.
+      - type: map
+        mapping:
+          x:
+            required: yes
+            type: float
+          y:
+            required: yes
+            type: float
+
+  ground-truth-tracks: # List of ground truth tracks.
+    required: no
+    type: seq
+    sequence: # List of tracks.
+    - type: map
+      mapping:
+        begin-step:  # Specifies, at which simulation step this track was born.
+          required: yes
+          type: int
+          range: {min: 0}
+        points: # List of points which define a single track.
+          required: yes
+          type: seq
+          sequence:
+          - type: map
+            mapping:
+              x:
+                required: yes
+                type: float
+              y:
+                required: yes
+                type: float
+
+  time-deltas: # Specifies the time passed between the time steps k-1 and k.
+    required: no
+    type: seq
+    sequence:
+    - type: float
+

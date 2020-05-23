@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from .common import FrameList
+from filter_simulator.common import FrameList
 
 
 class IDataProvider(ABC):

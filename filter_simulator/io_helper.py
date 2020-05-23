@@ -3,12 +3,10 @@ from typing import List, Optional
 from abc import ABC, abstractmethod
 import os
 import re
-import numpy as np
-import pymap3d as pm
 
-from .common import FrameList, Position, Detection
-from .data_provider_interface import IDataProvider
-from .data_provider_converter import CoordSysConv, EnuToWgs84Converter
+from .common import FrameList, Position
+from simulation_data.data_provider_interface import IDataProvider
+from simulation_data.data_provider_converter import CoordSysConv, EnuToWgs84Converter
 
 
 class InputLineHandler(ABC):
@@ -51,7 +49,7 @@ class InputLineHandlerLatLonIdx(InputLineHandler, IDataProvider):
         # end if
 
         # Add detection from field values to the frame
-        self.__frame_list.get_current_frame().add_detection(Detection(lat, lon))
+        self.__frame_list.get_current_frame().add_detection(Position(lat, lon))
 
         return
     # end def

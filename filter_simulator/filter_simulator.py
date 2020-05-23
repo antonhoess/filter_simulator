@@ -14,11 +14,11 @@ import re
 import datetime
 import copy
 
-from .common import Logging, SimulationDirection, Limits, Position, Detection, FrameList
+from .common import Logging, SimulationDirection, Limits, Position, FrameList
 from .window_helper import WindowMode, LimitsMode, WindowModeChecker
 from .io_helper import FileWriter
-from .data_provider_interface import IDataProvider
-from .data_provider_converter import CoordSysConv
+from simulation_data.data_provider_interface import IDataProvider
+from simulation_data.data_provider_converter import CoordSysConv
 
 
 class SimStepPart(Enum):
@@ -371,7 +371,7 @@ class FilterSimulator(ABC):
                     if len(self.__manual_frames) == 0:
                         self.__manual_frames.add_empty_frame()
 
-                    self.__manual_frames.get_current_frame().add_detection(Detection(event.xdata, event.ydata))
+                    self.__manual_frames.get_current_frame().add_detection(Position(event.xdata, event.ydata))
                     self.__logging.print_verbose(Logging.INFO, "Add point {:4f}, {:4f} to frame # {}".
                                                  format(event.xdata, event.ydata, len(self.__manual_frames)))
 

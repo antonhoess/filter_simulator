@@ -5,8 +5,8 @@ import pymap3d as pm
 from enum import Enum
 
 
-from .data_provider_interface import IDataProvider
-from .common import FrameList, Detection, Position
+from simulation_data.data_provider_interface import IDataProvider
+from filter_simulator.common import FrameList, Position
 
 
 class CoordSysConv(Enum):
@@ -36,7 +36,7 @@ class Wgs84ToEnuConverter(IDataProvider):
                 e, n, _ = pm.geodetic2enu(np.asarray(detection.x), np.asarray(detection.y), np.asarray(0),
                                           np.asarray(self.__observer.x), np.asarray(self.__observer.y), np.asarray(0),
                                           ell=None, deg=True)
-                frame_list_enu.get_current_frame().add_detection(Detection(float(e), float(n)))
+                frame_list_enu.get_current_frame().add_detection(Position(float(e), float(n)))
             # end for
         # end for
 
@@ -67,7 +67,7 @@ class EnuToWgs84Converter(IDataProvider):  # XXX diese klasse in io_helper einse
                 lat, lon, _ = pm.enu2geodetic(np.asarray(detection.x), np.asarray(detection.y), np.asarray(0),
                                               np.asarray(self.__observer.x), np.asarray(self.__observer.y), np.asarray(0),
                                               ell=None, deg=True)
-                frame_list_wgs84.get_current_frame().add_detection(Detection(float(lat), float(lon)))
+                frame_list_wgs84.get_current_frame().add_detection(Position(float(lat), float(lon)))
             # end for
         # end for
 

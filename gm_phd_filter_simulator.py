@@ -18,11 +18,11 @@ from distutils.util import strtobool
 from filter_simulator.common import Logging, Limits, Position
 from filter_simulator.io_helper import FileReader, InputLineHandlerLatLonIdx
 from filter_simulator.filter_simulator import FilterSimulator, SimStepPartConf
-from filter_simulator.data_provider_interface import IDataProvider
-from filter_simulator.data_provider_converter import CoordSysConv, Wgs84ToEnuConverter
+from simulation_data.data_provider_interface import IDataProvider
+from simulation_data.data_provider_converter import CoordSysConv, Wgs84ToEnuConverter
 from filter_simulator.dyn_matrix import TransitionModel, PcwConstWhiteAccelModelNd
 from gm_phd_filter import GmPhdFilter, GmComponent, Gmm, DistMeasure
-from phd_filter_data_provider import PhdFilterDataProvider, BirthDistribution
+from simulation_data.data_provider import DataProvider, BirthDistribution
 from filter_simulator.window_helper import LimitsMode
 
 
@@ -866,10 +866,10 @@ def main(argv: List[str]):
         data_provider = line_handler
 
     else:  # data_provider == DataProviderType.SIMULATOR
-        data_provider = PhdFilterDataProvider(f=args.f, q=args.q, dt=args.dt, t_max=args.sim_t_max, n_birth=args.n_birth, var_birth=args.var_birth, n_fa=args.n_fa, var_fa=args.var_fa,
-                                              fov=args.fov, birth_area=args.birth_area,
-                                              p_survival=args.p_survival, p_detection=args.p_detection, birth_dist=args.birth_dist, sigma_vel_x=args.sigma_vel_x, sigma_vel_y=args.sigma_vel_y,
-                                              birth_gmm=args.birth_gmm)
+        data_provider = DataProvider(f=args.f, q=args.q, dt=args.dt, t_max=args.sim_t_max, n_birth=args.n_birth, var_birth=args.var_birth, n_fa=args.n_fa, var_fa=args.var_fa,
+                                     fov=args.fov, birth_area=args.birth_area,
+                                     p_survival=args.p_survival, p_detection=args.p_detection, birth_dist=args.birth_dist, sigma_vel_x=args.sigma_vel_x, sigma_vel_y=args.sigma_vel_y,
+                                     birth_gmm=args.birth_gmm)
     # end if
 
     # Convert data from certain coordinate systems to ENU, which is used internally
@@ -885,7 +885,8 @@ def main(argv: List[str]):
                                                      trunc_thresh=args.trunc_thresh, merge_dist_measure=args.merge_dist_measure, merge_thresh=args.merge_thresh, max_components=args.max_components,
                                                      ext_states_bias=args.ext_states_bias, ext_states_use_integral=args.ext_states_use_integral,
                                                      density_draw_style=args.density_draw_style, n_samples_density_map=args.n_samples_density_map, n_bins_density_map=args.n_bins_density_map,
-                                                     draw_layers=args.draw_layers, sim_loop_step_parts=args.sim_loop_step_parts, show_legend=args.show_legend, show_colorbar=args.show_colorbar, start_window_max=args.start_window_max)
+                                                     draw_layers=args.draw_layers, sim_loop_step_parts=args.sim_loop_step_parts, show_legend=args.show_legend, show_colorbar=args.show_colorbar,
+                                                     start_window_max=args.start_window_max)
 
     sim.fn_out_seq_max = args.output_seq_max
     sim.fn_out_fill_gaps = args.output_fill_gaps

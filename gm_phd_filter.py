@@ -110,7 +110,8 @@ class GmComponent:
             dist = .5 * np.sqrt(diff)
 
         elif dist_measure is DistMeasure.HELLINGER:
-            dist = 1 - (np.power(np.linalg.det(s1), .25) * np.power(np.linalg.det(s2), .25)) / np.sqrt(np.linalg.det(s1)) * np.exp(-0.125 * diff)
+            # dist = 1 - (np.power(np.linalg.det(s1), .25) * np.power(np.linalg.det(s2), .25)) / np.sqrt(np.linalg.det(s)) * np.exp(-0.125 * diff)
+            dist = 1 - np.sqrt(np.sqrt(np.linalg.det(np.dot(s1, s2))) / np.linalg.det(s)) * np.exp(-0.125 * diff)
 
         elif dist_measure is DistMeasure.BHATTACHARYYA:
             dist = np.sqrt(.125 * diff - .5 * np.log(np.linalg.det(s) / np.sqrt(np.linalg.det(s1) * np.linalg.det(s2))))

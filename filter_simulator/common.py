@@ -55,26 +55,21 @@ class Position:
         self.x: float = x
         self.y: float = y
 
-    def __str__(self) -> str:
-        return "x={}, y={}".format(self.x, self.y)
+    def __str__(self):
+        return "Pos: x={:.04f}, y={:.04f}".format(self.x, self.y)
 
-
-class Detection(Position):
-    def __init__(self, x: float, y: float) -> None:
-        super().__init__(x, y)
-
-    def __str__(self) -> str:
-        return "x={}, y={}".format(self.x, self.y)
+    def __repr__(self):
+        return str(self)
 
 
 class Frame:
     def __init__(self) -> None:
-        self._detections: List[Detection] = []
+        self._detections: List[Position] = []
 
     def __iter__(self) -> FrameIterator:
         return FrameIterator(self)
 
-    def __getitem__(self, index: int) -> Detection:
+    def __getitem__(self, index: int) -> Position:
         return self._detections[index]
 
     def __len__(self) -> int:
@@ -83,7 +78,7 @@ class Frame:
     def __str__(self) -> str:
         return "Frame with {} detections".format(len(self))
 
-    def add_detection(self, detection: Detection) -> None:
+    def add_detection(self, detection: Position) -> None:
         self._detections.append(detection)
 
     def del_last_detection(self) -> None:
@@ -96,7 +91,7 @@ class Frame:
             del self._detections[-1]
     # end def
 
-    def get_detections(self) -> List[Detection]:
+    def get_detections(self) -> List[Position]:
         return self._detections
 # end class
 
@@ -106,9 +101,9 @@ class FrameIterator:
         self._frame: Frame = frame
         self._index: int = 0
 
-    def __next__(self) -> Detection:
+    def __next__(self) -> Position:
         if self._index < len(self._frame.get_detections()):
-            result: Detection = self._frame[self._index]
+            result: Position = self._frame[self._index]
             self._index += 1
 
             return result
@@ -154,6 +149,9 @@ class FrameList:
     def add_empty_frame(self) -> None:
         self._frames.append(Frame())
 
+    def add_frame(self, frame: Frame) -> None:
+        self._frames.append(frame)
+
     def del_last_frame(self) -> bool:
         if len(self._frames) > 0:
             self.get_current_frame().del_all_detections()
@@ -188,7 +186,7 @@ class FrameList:
         # end for
 
     @staticmethod
-    def __update_limit_by_detection(detection: Detection, limits: Limits) -> None:
+    def __update_limit_by_detection(detection: Position, limits: Limits) -> None:
         if limits.x_min is None or detection.x < limits.x_min:
             limits.x_min = detection.x
 
