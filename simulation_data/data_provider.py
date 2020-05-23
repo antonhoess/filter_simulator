@@ -97,18 +97,13 @@ class DataProvider(IDataProvider):
         self.__d.gtts = []
         self.__d.tds = None  # Will not be set here
 
-        # Calculate simulation data and store the results
-        d = self.run()
-        #d.write_file("xx.txt")
-        #d.read_file("xx.txt")
-        #d.cross_check()
-        self.__frame_list: FrameList = d.ds
-        # XXX self.d = d
+        # Calculate simulation data
+        self.__run()
     # end def
 
     @property
-    def frame_list(self) -> FrameList:
-        return self.__frame_list
+    def sim_data(self) -> SimulationData:
+        return self.__d
     # end def
 
     def __update_window(self, _frame):
@@ -116,7 +111,7 @@ class DataProvider(IDataProvider):
             self.__ax.clear()
             self.__ax.set_aspect('equal', 'box')
 
-            # Targets (trajectory)
+            # Target trajectories
             for gtt in self.__d.gtts:
                 self.__ax.plot([point.x for point in gtt.points], [point.y for point in gtt.points], markersize=5, marker="o", markerfacecolor="none", markeredgewidth=.5, color="blue", linewidth=.5)
             # end for
@@ -166,7 +161,7 @@ class DataProvider(IDataProvider):
         return min_val + (max_val - min_val) * random.random()
     # end def
 
-    def run(self) -> SimulationData:
+    def __run(self):
         if self.__show_visu:
             # Processing thread
             t_proc: threading.Thread = threading.Thread(target=self.__processing)
@@ -187,8 +182,6 @@ class DataProvider(IDataProvider):
         else:
             self.__processing()
         # end if
-
-        return self.__d
     # end def
 
     def __processing(self):

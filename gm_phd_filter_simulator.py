@@ -9,7 +9,7 @@ from datetime import datetime
 from matplotlib.patches import Ellipse, Rectangle
 from matplotlib.legend_handler import HandlerPatch
 import seaborn as sns
-from enum import Enum, IntEnum
+from enum import auto, Enum, IntEnum
 import argparse
 from distutils.util import strtobool
 # import os
@@ -27,16 +27,22 @@ from filter_simulator.window_helper import LimitsMode
 
 
 class DrawLayer(IntEnum):
-    DENSITY_MAP = 0
-    FOV = 1
-    BIRTH_AREA = 2
-    ALL_DET = 3
-    ALL_DET_CONN = 4
-    GMM_COV_ELL = 5
-    GMM_COV_MEAN = 6
-    EST_STATE = 7
-    ALL_EST_STATE = 8
-    CUR_DET = 9
+    DENSITY_MAP = auto()
+    FOV = auto()
+    BIRTH_AREA = auto()
+    ALL_TRAJ_LINE = auto()
+    ALL_TRAJ_POS = auto()
+    UNTIL_TRAJ_LINE = auto()
+    UNTIL_TRAJ_POS = auto()
+    ALL_DET = auto()
+    ALL_DET_CONN = auto()
+    UNTIL_MISSED_DET = auto()
+    UNTIL_FALSE_ALARM = auto()
+    CUR_GMM_COV_ELL = auto()
+    CUR_GMM_COV_MEAN = auto()
+    CUR_EST_STATE = auto()
+    UNTIL_EST_STATE = auto()
+    CUR_DET = auto()
 # end class
 
 
@@ -79,24 +85,27 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         FilterSimulator.__init__(self, data_provider, output_coord_system_conversion, fn_out, fn_out_video, auto_step_interval, auto_step_autostart, fov, limits_mode, observer, start_window_max, logging)
         GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, rho_fa=rho_fa, gate_thresh=gate_thresh, logging=logging)
 
-        self.__trunc_thresh = trunc_thresh
-        self.__merge_dist_measure = merge_dist_measure
-        self.__merge_thresh = merge_thresh
-        self.__max_components = max_components
-        self.__ext_states_bias = ext_states_bias
-        self.__ext_states_use_integral = ext_states_use_integral
-        self.__density_draw_style = density_draw_style
-        self.__n_samples_density_map = n_samples_density_map
-        self.__n_bins_density_map = n_bins_density_map
+        self.__data_provider: IDataProvider = data_provider
+        self.__trunc_thresh: float = trunc_thresh
+        self.__merge_dist_measure: DistMeasure = merge_dist_measure
+        self.__merge_thresh: float = merge_thresh
+        self.__max_components: int = max_components
+        self.__ext_states_bias: float = ext_states_bias
+        self.__ext_states_use_integral: bool = ext_states_use_integral
+        self.__density_draw_style: DensityDrawStyle = density_draw_style
+        self.__n_samples_density_map: int = n_samples_density_map
+        self.__n_bins_density_map: int = n_bins_density_map
         self.__logging: Logging = logging
-        self.__draw_layers: Optional[List[DrawLayer]] = draw_layers if draw_layers is not None else [ly for ly in DrawLayer]
-        self.__active_draw_layers: List[bool] = [layer in self.__draw_layers for layer in DrawLayer]
+        self.__draw_layers: Optional[List[DrawLayer]] = draw_layers \
+            if draw_layers is not None else [ly for ly in DrawLayer if ly not in
+                                             [DrawLayer.ALL_TRAJ_LINE, DrawLayer.ALL_TRAJ_POS, DrawLayer.ALL_DET, DrawLayer.ALL_DET_CONN, DrawLayer.CUR_GMM_COV_ELL, DrawLayer.CUR_GMM_COV_MEAN]]
+        self.__active_draw_layers: List[bool] = [True for _ in self.__draw_layers]
         self.__show_legend: Optional[Union[int, str]] = show_legend
         self.__show_colorbar: bool = show_colorbar
         self.__fov: Limits = fov
         self.__birth_area: Limits = birth_area
         self.__ext_states: List[List[np.ndarray]] = []
-        self.__colorbar_is_added = False
+        self.__colorbar_is_added: bool = False
         self.__last_step_part: str = "Initialized"
 
     def _set_sim_loop_step_part_conf(self):
@@ -257,7 +266,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         plot = None
 
         for l, ly in enumerate(self.__draw_layers):
-            if not self.__active_draw_layers[ly]:
+            if not self.__active_draw_layers[l]:
                 continue
 
             zorder = l
@@ -308,6 +317,52 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                                 linestyle=":", linewidth=0.5,  zorder=zorder, label="birth area")
                 self._ax.add_patch(ell)
 
+            elif ly == DrawLayer.ALL_TRAJ_LINE:
+                if self.__data_provider.sim_data.gtts is not None:
+                    # Target trajectories
+                    for gtt in self.__data_provider.sim_data.gtts:
+                        self._ax.plot([point.x for point in gtt.points], [point.y for point in gtt.points], color="blue", linewidth=.5, zorder=zorder, label="traj. ($t_{0..T}$)")
+                    # end for
+                # end if
+
+            elif ly == DrawLayer.ALL_TRAJ_POS:
+                if self.__data_provider.sim_data.gtts is not None:
+                    # Target trajectories
+                    for gtt in self.__data_provider.sim_data.gtts:
+                        self._ax.scatter([point.x for point in gtt.points], [point.y for point in gtt.points],
+                                         s=25, color="none", marker="o", edgecolor="blue", linewidth=.5, zorder=zorder, label="traj. pos. ($t_{0..T}$)")
+                        # Mark dead trajectories as such by changing the color of the last marker
+                        if gtt.begin_step + len(gtt.points) < self.__data_provider.sim_data.meta.number_steps:
+                            self._ax.scatter([gtt.points[-1].x], [gtt.points[-1].y],
+                                             s=25, color="none", marker="o", edgecolor="black", linewidth=.5, zorder=zorder)
+
+                    # end for
+                # end if
+
+            elif ly == DrawLayer.UNTIL_TRAJ_LINE:
+                if self.__data_provider.sim_data.gtts is not None and len(self.__data_provider.sim_data.gtts) > self._step:
+                    # Target trajectories
+                    for gtt in self.__data_provider.sim_data.gtts:
+                        if gtt.begin_step <= self._step:
+                            self._ax.plot([point.x for point in gtt.points[:self._step - gtt.begin_step + 1]], [point.y for point in gtt.points[:self._step - gtt.begin_step + 1]],
+                                          color="blue", linewidth=.5, zorder=zorder, label="traj. ($t_{0..k}$)")
+                    # end for
+                # end if
+
+            elif ly == DrawLayer.UNTIL_TRAJ_POS:
+                if self.__data_provider.sim_data.gtts is not None and len(self.__data_provider.sim_data.gtts) > self._step:
+                    # Target trajectories
+                    for gtt in self.__data_provider.sim_data.gtts:
+                        if gtt.begin_step <= self._step:
+                            self._ax.scatter([point.x for point in gtt.points[:self._step - gtt.begin_step + 1]], [point.y for point in gtt.points[:self._step - gtt.begin_step + 1]],
+                                             s=25, color="none", marker="o", edgecolor="blue", linewidth=.5, zorder=zorder, label="traj. pos. ($t_{0..k}$)")
+                            # Mark dead trajectories as such by changing the color of the last marker
+                            if gtt.begin_step + len(gtt.points) - 1 <= self._step:
+                                self._ax.scatter([gtt.points[-1].x], [gtt.points[-1].y],
+                                                 s=25, color="none", marker="o", edgecolor="black", linewidth=.5, zorder=zorder)
+                    # end for
+                # end if
+
             elif ly == DrawLayer.ALL_DET:
                 # All detections - each frame's detections in a different color
                 for frame in self._frames:
@@ -320,7 +375,22 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                     self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5, linestyle="--", zorder=zorder, label="conn. det. ($t_{0..T}$)")
                 # end for
 
-            elif ly == DrawLayer.GMM_COV_ELL:
+            elif ly == DrawLayer.UNTIL_MISSED_DET:
+                if self.__data_provider.sim_data.mds is not None:
+                    for frame in self.__data_provider.sim_data.mds[:self._step + 1]:
+                        self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=12, linewidth=.5, color="black", marker="x", zorder=zorder, label="missed det. ($t_{0..k}$)")
+                    # end for
+                # end if
+
+            elif ly == DrawLayer.UNTIL_FALSE_ALARM:
+                if self.__data_provider.sim_data.fas is not None:
+                    for frame in self.__data_provider.sim_data.fas[:self._step + 1]:
+                        self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=12, linewidth=.5, color="red", edgecolors="darkred", marker="o", zorder=zorder,
+                                         label="false alarm ($t_{0..k}$)")
+                    # end for
+                # end if
+
+            elif ly == DrawLayer.CUR_GMM_COV_ELL:
                 if self._cur_frame is not None:
                     # GM-PHD components covariance ellipses
                     for comp in self._gmm:
@@ -329,13 +399,13 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                     # end for
                 # end if
 
-            elif ly == DrawLayer.GMM_COV_MEAN:
+            elif ly == DrawLayer.CUR_GMM_COV_MEAN:
                 if self._cur_frame is not None:
                     # GM-PHD components means
                     self._ax.scatter([comp.loc[0] for comp in self._gmm], [comp.loc[1] for comp in self._gmm], s=5, edgecolor="blue", marker="o", zorder=zorder, label="gmm comp. mean")
                 # end if
 
-            elif ly == DrawLayer.EST_STATE:
+            elif ly == DrawLayer.CUR_EST_STATE:
                 if self._cur_frame is not None:
                     # Estimated states
                     if len(self.__ext_states) > 0:
@@ -345,20 +415,18 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                     # end if
                 # end if
 
-            elif ly == DrawLayer.ALL_EST_STATE:
+            elif ly == DrawLayer.UNTIL_EST_STATE:
                 if self._cur_frame is not None:
                     # Estimated states
                     est_items = [est_item for est_items in self.__ext_states for est_item in est_items]
-                    self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=10, c="red", edgecolor="black", linewidths=.1, marker="o", zorder=zorder,
+                    self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=10, c="gold", edgecolor="black", linewidths=.2, marker="o", zorder=zorder,
                                      label="est. states ($t_{0..k}$)")
                 # end if
 
             elif ly == DrawLayer.CUR_DET:
                 if self._cur_frame is not None:
                     # Current detections
-                    det_pos_x: List[float] = [det.x for det in self._cur_frame]
-                    det_pos_y: List[float] = [det.y for det in self._cur_frame]
-                    self._ax.scatter(det_pos_x, det_pos_y, s=70, c="red", linewidth=.5, marker="x", zorder=zorder, label="det. ($t_k$)")
+                    self._ax.scatter([det.x for det in self._cur_frame], [det.y for det in self._cur_frame], s=70, c="red", linewidth=.5, marker="x", zorder=zorder, label="det. ($t_k$)")
                 # end if
             # end if
         # end for
@@ -376,9 +444,12 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
             handler_map[Ellipse] = HandlerEllipse()
 
             handles, labels = self._ax.get_legend_handles_labels()  # Easy way to prevent labels appear multiple times (in case where alements are placed in a for loop)
-            by_label = dict(zip(labels, handles))
-            legend = self._ax.legend(by_label.values(), by_label.keys(), loc=self.__show_legend, fontsize="xx-small", handler_map=handler_map)
-            legend.set_zorder(len(self.__draw_layers))  # Put the legend on top
+
+            if len(labels) > 0:
+                by_label = dict(zip(labels, handles))
+                legend = self._ax.legend(by_label.values(), by_label.keys(), loc=self.__show_legend, fontsize="xx-small", handler_map=handler_map)
+                legend.set_zorder(len(self.__draw_layers))  # Put the legend on top
+            # end if
         # end if
     # end def
 
@@ -393,17 +464,44 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
         elif len(fields) > 0 and fields[0] == "l":
             if len(fields) > 1:
-                try:
-                    layer = int(fields[1])
-                    self.__active_draw_layers[layer] = not self.__active_draw_layers[layer]
-                    print(f"Layer {DrawLayer(layer).name} {'de' if not self.__active_draw_layers[layer] else ''}activated.")
+                if fields[1] == "t":  # Toggle
+                    for layer in range(len(self.__active_draw_layers)):
+                        self.__active_draw_layers[layer] = not self.__active_draw_layers[layer]
+                    # end for
+                    print("Activity status for all drawing layers toggled.")
                     self._refresh.set()
-                except ValueError:
-                    pass
-                # end try
+
+                elif fields[1] == "s":  # Switch all layers on/off
+                    new_state = True
+
+                    # Only if all layers are active, deactivate all, otherwise active all
+                    if all(self.__active_draw_layers):
+                        new_state = False
+                    # end if
+
+                    for layer in range(len(self.__active_draw_layers)):
+                        self.__active_draw_layers[layer] = new_state
+                    # end for
+                    print(f"All drawing layers activity set to {'active' if new_state else 'inactive'}.")
+                    self._refresh.set()
+
+                else:
+                    try:
+                        layer = int(fields[1])
+                        if 0 <= layer < len(self.__draw_layers):
+                            self.__active_draw_layers[layer] = not self.__active_draw_layers[layer]
+                            print(f"Layer {self.__draw_layers[layer].name} {'de' if not self.__active_draw_layers[layer] else ''}activated.")
+                            self._refresh.set()
+                        else:
+                            print(f"Entered layer number ({layer}) not valid. Allowed values range from {0} to {len(self.__draw_layers) - 1}.")
+                        # end if
+                    except ValueError:
+                        pass
+                    # end try
+                # end if
             else:
-                for layer in range(len(list(DrawLayer))):
-                    print(f"{'+' if self.__active_draw_layers[layer] else ' '} ({'{:2d}'.format(layer)}) {DrawLayer(layer).name}")
+                for l, layer in enumerate(self.__draw_layers):
+                    print(f"{'+' if self.__active_draw_layers[l] else ' '} ({'{:2d}'.format(l)}) {layer.name}")
                 # end for
             # end if
         else:
@@ -644,8 +742,8 @@ class GmPhdFilterSimulatorConfig:
                            help="Sets the (sensor's) detection probability for the measurements.")
 
         group.add_argument("--transition_model", action=self._EvalAction, comptype=TransitionModel, choices=[str(t) for t in TransitionModel], default=TransitionModel.INDIVIDUAL,
-                           help="Sets the transition model. If set to TransitionModel.INDIVIDUAL, the matrices F (see paraemter --mat_f) and Q (see paraemter --mat_q) need to be specified. "
-                                "PCW_CONST_WHITE_ACC_MODEL_2xND stands for Piecewise Constant Acceleration Model.")
+                           help=f"Sets the transition model. If set to {str(TransitionModel.INDIVIDUAL)}, the matrices F (see paraemter --mat_f) and Q (see paraemter --mat_q) need to be specified. "
+                                f"{str(TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND)} stands for Piecewise Constant Acceleration Model.")
 
         group.add_argument("--delta_t", metavar="[>0.0 - N]", dest="dt", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=1.,
                            help="Sets the time betwen two measurements to DELTA_T. Does not work with the --transition_model parameter set to TransitionModel.INDIVIDUAL.")
@@ -664,11 +762,11 @@ class GmPhdFilterSimulatorConfig:
 
         group.add_argument("--sigma_accel_x", type=float, default=.1,
                            help="Sets the variance of the acceleration's x-component to calculate the process noise covariance_matrix Q. Only evaluated when using the "
-                                "TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND (see parameter --transition_model) and in this case ignores the value specified for Q (see parameter --mat_q).")
+                                f"{str(TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND)} (see parameter --transition_model) and in this case ignores the value specified for Q (see parameter --mat_q).")
 
         group.add_argument("--sigma_accel_y", type=float, default=.1,
                            help="Sets the variance of the acceleration's y-component to calculate the process noise covariance_matrix Q. Only evaluated when using the "
-                                "TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND (see parameter --transition_model) and in this case ignores the value specified for Q (see parameter --mat_q).")
+                                "{str(TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND)} (see parameter --transition_model) and in this case ignores the value specified for Q (see parameter --mat_q).")
 
         group.add_argument("--gate_thresh", metavar="[0.0 - 1.0]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, 1.), default=None,
                            help="Sets the confidence threshold for chi^2 gating on new measurements to GATE_THRESH.")
@@ -716,16 +814,16 @@ class GmPhdFilterSimulatorConfig:
         group.add_argument("--birth_dist", action=self._EvalAction, comptype=BirthDistribution, choices=[str(t) for t in BirthDistribution], default=BirthDistribution.UNIFORM_AREA,
                            help="Sets the type of probability distribution for new born objects. In case BirthDistribution.UNIFORM_AREA is set, the newly born objects are distributed uniformly "
                                 "over the area defined by the parameter --birth_area (or the FoV if not set) and the initial velocity will be set to the values defineed by the perameters "
-                                "--sigma_vel_x and --sigma_vel_y. If BirthDistribution.GMM_FILTER is set, the same GMM will get used for the creating of new objects, as the filter uses for their "
-                                "detection. This parameter only takes effect when the parameter --data_provider is set to DataProviderType.SIMULATOR.")
+                                f"--sigma_vel_x and --sigma_vel_y. If {str(BirthDistribution.GMM_FILTER)} is set, the same GMM will get used for the creating of new objects, as the filter uses for "
+                                f"their detection. This parameter only takes effect when the parameter --data_provider is set to {str(DataProviderType.SIMULATOR)}.")
 
         group.add_argument("--sigma_vel_x", metavar="[0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=.2,
                            help="Sets the variance of the velocitiy's initial x-component of a newly born object to SIGMA_VEL_X. Only takes effect if the parameter --birth_dist is set to "
-                                "BirthDistribution.UNIFORM_AREA.")
+                                f"{str(BirthDistribution.UNIFORM_AREA)}.")
 
         group.add_argument("--sigma_vel_y", metavar="[0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, .0, None), default=.2,
                            help="Sets the variance of the velocitiy's initial y-component of a newly born object to SIGMA_VEL_y. Only takes effect if the parameter --birth_dist is set to "
-                                "BirthDistribution.UNIFORM_AREA.")
+                                f"{str(BirthDistribution.UNIFORM_AREA)}.")
 
         group.add_argument("--sim_loop_step_parts", metavar=f"[{{{  ','.join([str(t) for t in PhdFilterSimStepPart]) }}}*]", action=self._EvalListAction, comptype=PhdFilterSimStepPart,
                            default=[PhdFilterSimStepPart.USER_PREDICT_AND_UPDATE, PhdFilterSimStepPart.USER_PRUNE, PhdFilterSimStepPart.USER_EXTRACT_STATES,
@@ -774,8 +872,8 @@ class GmPhdFilterSimulatorConfig:
 
         group.add_argument("--density_draw_style", action=self._EvalAction, comptype=DensityDrawStyle, choices=[str(t) for t in DensityDrawStyle],
                            default=DensityDrawStyle.NONE,
-                           help="Sets the drawing style to visualizing the density/intensity map. Possible values are: DensityDrawStyle.KDE (kernel density estimator), "
-                                "DensityDrawStyle.EVAL (evaluate the correct value for each cell in a grid) and DensityDrawStyle.HEATMAP (heatmap made of sampled points from the PHD).")
+                           help=f"Sets the drawing style to visualizing the density/intensity map. Possible values are: {str(DensityDrawStyle.KDE)} (kernel density estimator), "
+                                f"{str(DensityDrawStyle.EVAL)} (evaluate the correct value for each cell in a grid) and {str(DensityDrawStyle.HEATMAP)} (heatmap made of sampled points from the PHD).")
 
         group.add_argument("--n_samples_density_map", metavar="[1000-N]", type=GmPhdFilterSimulatorConfig.InRange(int, 1000, None),  default=1000,
                            help="Sets the number samples to draw from the PHD for drawing the density map. A good number might be 10000.")
@@ -784,10 +882,11 @@ class GmPhdFilterSimulatorConfig:
                            help="Sets the number bins for drawing the PHD density map. A good number might be 100.")
 
         group.add_argument("--draw_layers", metavar=f"[{{{  ','.join([str(t) for t in DrawLayer]) }}}*]", action=self._EvalListAction, comptype=DrawLayer,
-                           default=None,
-                           help=f"Sets the list of drawing layers. Allows to draw only the required layers and in the desired order. If not set, all layers are drawn in a fixed order. "
-                           "Example 1: [DrawLayer.DENSITY_MAP, DrawLayer.EST_STATE]\n"
-                           "Example 2: [layer for layer in DrawLayer if not layer == DrawLayer.GMM_COV_ELL and not layer == DrawLayer.GMM_COV_MEAN]")
+                           default=[ly for ly in DrawLayer if ly not in[DrawLayer.ALL_TRAJ_LINE, DrawLayer.ALL_TRAJ_POS, DrawLayer.ALL_DET, DrawLayer.ALL_DET_CONN,
+                                                                        DrawLayer.CUR_GMM_COV_ELL, DrawLayer.CUR_GMM_COV_MEAN]],
+                           help=f"Sets the list of drawing layers. Allows to draw only the required layers and in the desired order. If not set, a fixes set of layers are drawn in a fixed order. "
+                           f"Example 1: [{str(DrawLayer.DENSITY_MAP)}, {str(DrawLayer.UNTIL_EST_STATE)}]\n"
+                           f"Example 2: [layer for layer in DrawLayer if not layer == {str(DrawLayer.CUR_GMM_COV_ELL)} and not layer == {str(DrawLayer.CUR_GMM_COV_MEAN)}]")
 
         group.add_argument("--show_legend", action=self._IntOrWhiteSpaceStringAction, nargs="+", default="lower right",
                            help="If set, the legend will be shown. SHOW_LEGEND itself specifies the legend's location. The location can be specified with a number of the corresponding string from "

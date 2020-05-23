@@ -585,7 +585,6 @@ g.gmm
 
         # Iterate to build the new GMM
         new_gmm: Gmm = Gmm()
-        print(len(source_gmm))
         while len(source_gmm) > 0:
             # Find weightiest old component and pull it out
             w_index = int(np.argmax([comp.weight for comp in source_gmm]))

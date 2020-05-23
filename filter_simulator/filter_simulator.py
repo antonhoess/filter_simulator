@@ -569,7 +569,7 @@ class FilterSimulator(ABC):
         # end def
 
         last_auto_step_time = datetime.datetime.now()
-        self.__frames = self.__data_provider.frame_list
+        self.__frames = self.__data_provider.sim_data.ds
 
         if len(self._frames) == 0:
             return

@@ -7,6 +7,7 @@ import re
 from .common import FrameList, Position
 from simulation_data.data_provider_interface import IDataProvider
 from simulation_data.data_provider_converter import CoordSysConv, EnuToWgs84Converter
+from simulation_data.sim_data import SimulationData, MetaInformation
 
 
 class InputLineHandler(ABC):
@@ -22,8 +23,16 @@ class InputLineHandlerLatLonIdx(InputLineHandler, IDataProvider):
         super().__init__()
 
     @property
-    def frame_list(self) -> FrameList:
-        return self.__frame_list
+    def sim_data(self) -> SimulationData:
+        d = SimulationData()
+        d.meta = MetaInformation()
+        d.meta.version = "0.1"
+        d.meta.number_steps = len(self.__frame_list)
+
+        d.ds = self.__frame_list
+
+        return d
+    # end def
 
     def handle_line(self, line: str) -> None:
         lat: float = .0
