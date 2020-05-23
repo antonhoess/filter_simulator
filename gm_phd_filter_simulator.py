@@ -53,6 +53,7 @@ class PhdFilterSimStepPart(Enum):
     USER_PREDICT_AND_UPDATE = 3
     USER_PRUNE = 4
     USER_EXTRACT_STATES = 5
+    USER_INITIAL_KEYBOARD_COMMANDS = 6
 # end class
 
 
@@ -78,7 +79,8 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                  trunc_thresh: float, merge_dist_measure: DistMeasure, merge_thresh: float, max_components: int,
                  ext_states_bias: float, ext_states_use_integral: bool,
                  density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int,
-                 draw_layers: Optional[List[DrawLayer]], sim_loop_step_parts: List[PhdFilterSimStepPart], show_legend: Optional[Union[int, str]], show_colorbar: bool, start_window_max: bool):
+                 draw_layers: Optional[List[DrawLayer]], sim_loop_step_parts: List[PhdFilterSimStepPart], show_legend: Optional[Union[int, str]], show_colorbar: bool, start_window_max: bool,
+                 init_kbd_cmds: List[str]):
 
         self.__sim_loop_step_parts: List[PhdFilterSimStepPart] = sim_loop_step_parts  # Needs to be set before calling the contructor of the FilterSimulator, since it already needs this values there
 
@@ -96,17 +98,18 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         self.__n_samples_density_map: int = n_samples_density_map
         self.__n_bins_density_map: int = n_bins_density_map
         self.__logging: Logging = logging
-        self.__draw_layers: Optional[List[DrawLayer]] = draw_layers \
-            if draw_layers is not None else [ly for ly in DrawLayer if ly not in
-                                             [DrawLayer.ALL_TRAJ_LINE, DrawLayer.ALL_TRAJ_POS, DrawLayer.ALL_DET, DrawLayer.ALL_DET_CONN, DrawLayer.CUR_GMM_COV_ELL, DrawLayer.CUR_GMM_COV_MEAN]]
-        self.__active_draw_layers: List[bool] = [True for _ in self.__draw_layers]
+        self.__draw_layers: Optional[List[DrawLayer]] = draw_layers
         self.__show_legend: Optional[Union[int, str]] = show_legend
         self.__show_colorbar: bool = show_colorbar
         self.__fov: Limits = fov
         self.__birth_area: Limits = birth_area
+        self.__init_kbd_cmds = init_kbd_cmds
+        # --
+        self.__active_draw_layers: List[bool] = [True for _ in self.__draw_layers]
         self.__ext_states: List[List[np.ndarray]] = []
         self.__colorbar_is_added: bool = False
         self.__last_step_part: str = "Initialized"
+        self.__initial_keyboard_commands_executed = False
 
     def _set_sim_loop_step_part_conf(self):
         # Configure the processing steps
@@ -130,6 +133,9 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
             elif step_part is PhdFilterSimStepPart.USER_EXTRACT_STATES:
                 sim_step_part_conf.add_user_step(self.__sim_loop_extract_states)
+
+            elif step_part is PhdFilterSimStepPart.USER_INITIAL_KEYBOARD_COMMANDS:
+                sim_step_part_conf.add_user_step(self.__sim_loop_initial_keyboard_commands)
 
             else:
                 raise ValueError
@@ -171,6 +177,15 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
             ext_states = self._extract_states(bias=self.__ext_states_bias, use_integral=self.__ext_states_use_integral)
             self.__remove_duplikate_states(ext_states)
             self.__ext_states.append(ext_states)
+        # end if
+    # end def
+
+    def __sim_loop_initial_keyboard_commands(self):
+        if not self.__initial_keyboard_commands_executed:
+            self.__initial_keyboard_commands_executed = True
+
+            for cmd in self.__init_kbd_cmds:
+                self._cb_keyboard(cmd)
         # end if
     # end def
 
@@ -723,6 +738,11 @@ class GmPhdFilterSimulatorConfig:
                            help="Sets the geodetic position of the observer in WGS84 to OBSERVER_POSITION. Can be used instead of the automatically used center of all detections or in case of only "
                                 "manually creating detections, which needed to be transformed back to WGS84.")
 
+        group.add_argument("--init_kbd_cmds", action=self._EvalListAction, comptype=str,
+                           default=[],
+                           help=f"Specifies a list of keyboard commands that will be executed only once. These commands will be executed only if and when "
+                           f"{str(PhdFilterSimStepPart.USER_INITIAL_KEYBOARD_COMMANDS)} is set with the parameter --sim_loop_step_parts.")
+
         # PHD group
         group = self.__parser.add_argument_group('PHD - parameters for the PHD filter setup')
 
@@ -826,7 +846,7 @@ class GmPhdFilterSimulatorConfig:
                                 f"{str(BirthDistribution.UNIFORM_AREA)}.")
 
         group.add_argument("--sim_loop_step_parts", metavar=f"[{{{  ','.join([str(t) for t in PhdFilterSimStepPart]) }}}*]", action=self._EvalListAction, comptype=PhdFilterSimStepPart,
-                           default=[PhdFilterSimStepPart.USER_PREDICT_AND_UPDATE, PhdFilterSimStepPart.USER_PRUNE, PhdFilterSimStepPart.USER_EXTRACT_STATES,
+                           default=[PhdFilterSimStepPart.USER_INITIAL_KEYBOARD_COMMANDS, PhdFilterSimStepPart.USER_PREDICT_AND_UPDATE, PhdFilterSimStepPart.USER_PRUNE, PhdFilterSimStepPart.USER_EXTRACT_STATES,
                                     PhdFilterSimStepPart.DRAW, PhdFilterSimStepPart.WAIT_FOR_TRIGGER, PhdFilterSimStepPart.LOAD_NEXT_FRAME],
                            help=f"Sets the loops step parts and their order. This determindes how the main loop in the simulation behaves, when the current state is drawn, the user can interact, "
                            f"etc. Be cautious that some elements need to be present to make the program work (see default value)!")
@@ -985,7 +1005,7 @@ def main(argv: List[str]):
                                                      ext_states_bias=args.ext_states_bias, ext_states_use_integral=args.ext_states_use_integral,
                                                      density_draw_style=args.density_draw_style, n_samples_density_map=args.n_samples_density_map, n_bins_density_map=args.n_bins_density_map,
                                                      draw_layers=args.draw_layers, sim_loop_step_parts=args.sim_loop_step_parts, show_legend=args.show_legend, show_colorbar=args.show_colorbar,
-                                                     start_window_max=args.start_window_max)
+                                                     start_window_max=args.start_window_max, init_kbd_cmds=args.init_kbd_cmds)
 
     sim.fn_out_seq_max = args.output_seq_max
     sim.fn_out_fill_gaps = args.output_fill_gaps
