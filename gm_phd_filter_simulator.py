@@ -503,20 +503,25 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                 else:
                     try:
                         layer = int(fields[1])
-                        if 0 <= layer < len(self.__draw_layers):
-                            self.__active_draw_layers[layer] = not self.__active_draw_layers[layer]
-                            print(f"Layer {self.__draw_layers[layer].name} {'de' if not self.__active_draw_layers[layer] else ''}activated.")
-                            self._refresh.set()
+                        if min(DrawLayer) <= layer <= max(DrawLayer):
+                            for l, ly in enumerate(self.__draw_layers):
+                                if DrawLayer(layer) is ly:
+                                    self.__active_draw_layers[l] = not self.__active_draw_layers[l]
+                                    print(f"Layer {DrawLayer(layer).name} {'de' if not self.__active_draw_layers[l] else ''}activated.")
+                                    self._refresh.set()
+                                # end if
+                            # end for
                         else:
-                            print(f"Entered layer number ({layer}) not valid. Allowed values range from {0} to {len(self.__draw_layers) - 1}.")
+                            print(f"Entered layer number ({layer}) not valid. Allowed values range from {min(DrawLayer)} to {max(DrawLayer)}.")
                         # end if
                     except ValueError:
                         pass
                     # end try
                 # end if
+
             else:
                 for l, layer in enumerate(self.__draw_layers):
-                    print(f"{'+' if self.__active_draw_layers[l] else ' '} ({'{:2d}'.format(l)}) {layer.name}")
+                    print(f"{'+' if self.__active_draw_layers[l] else ' '} ({'{:2d}'.format(int(layer))}) {layer.name}")
                 # end for
             # end if
         else:
