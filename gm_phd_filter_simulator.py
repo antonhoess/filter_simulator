@@ -16,14 +16,13 @@ from distutils.util import strtobool
 # os.environ['COLUMNS'] = "120"
 
 from filter_simulator.common import Logging, Limits, Position
-from filter_simulator.io_helper import FileReader, InputLineHandlerLatLonIdx
 from filter_simulator.filter_simulator import FilterSimulator, SimStepPartConf
-from simulation_data.data_provider_interface import IDataProvider
-from simulation_data.data_provider_converter import CoordSysConv, Wgs84ToEnuConverter
+from scenario_data.scenario_data_converter import CoordSysConv, Wgs84ToEnuConverter
 from filter_simulator.dyn_matrix import TransitionModel, PcwConstWhiteAccelModelNd
 from gm_phd_filter import GmPhdFilter, GmComponent, Gmm, DistMeasure
-from simulation_data.data_provider import DataProvider, BirthDistribution
+from scenario_data.scenario_data_simulator import ScenarioDataSimulator, BirthDistribution
 from filter_simulator.window_helper import LimitsMode
+from scenario_data.scenario_data import ScenarioData
 
 
 class DrawLayer(IntEnum):
@@ -72,7 +71,7 @@ class DataProviderType(Enum):
 
 
 class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
-    def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv,
+    def __init__(self, scenario_data: ScenarioData, output_coord_system_conversion: CoordSysConv,
                  fn_out: str, fn_out_video: Optional[str], auto_step_interval: int, auto_step_autostart: bool, fov: Limits, birth_area: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
                  birth_gmm: List[GmComponent], p_survival: float, p_detection: float,
                  f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, rho_fa: float, gate_thresh: Optional[float],
@@ -84,10 +83,10 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
         self.__sim_loop_step_parts: List[PhdFilterSimStepPart] = sim_loop_step_parts  # Needs to be set before calling the contructor of the FilterSimulator, since it already needs this values there
 
-        FilterSimulator.__init__(self, data_provider, output_coord_system_conversion, fn_out, fn_out_video, auto_step_interval, auto_step_autostart, fov, limits_mode, observer, start_window_max, logging)
+        FilterSimulator.__init__(self, scenario_data, output_coord_system_conversion, fn_out, fn_out_video, auto_step_interval, auto_step_autostart, fov, limits_mode, observer, start_window_max, logging)
         GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, rho_fa=rho_fa, gate_thresh=gate_thresh, logging=logging)
 
-        self.__data_provider: IDataProvider = data_provider
+        self.__scenario_data: ScenarioData = scenario_data
         self.__trunc_thresh: float = trunc_thresh
         self.__merge_dist_measure: DistMeasure = merge_dist_measure
         self.__merge_thresh: float = merge_thresh
@@ -333,21 +332,21 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                 self._ax.add_patch(ell)
 
             elif ly == DrawLayer.ALL_TRAJ_LINE:
-                if self.__data_provider.sim_data.gtts is not None:
+                if self.__scenario_data.gtts is not None:
                     # Target trajectories
-                    for gtt in self.__data_provider.sim_data.gtts:
+                    for gtt in self.__scenario_data.gtts:
                         self._ax.plot([point.x for point in gtt.points], [point.y for point in gtt.points], color="blue", linewidth=.5, zorder=zorder, label="traj. ($t_{0..T}$)")
                     # end for
                 # end if
 
             elif ly == DrawLayer.ALL_TRAJ_POS:
-                if self.__data_provider.sim_data.gtts is not None:
+                if self.__scenario_data.gtts is not None:
                     # Target trajectories
-                    for gtt in self.__data_provider.sim_data.gtts:
+                    for gtt in self.__scenario_data.gtts:
                         self._ax.scatter([point.x for point in gtt.points], [point.y for point in gtt.points],
                                          s=25, color="none", marker="o", edgecolor="blue", linewidth=.5, zorder=zorder, label="traj. pos. ($t_{0..T}$)")
                         # Mark dead trajectories as such by changing the color of the last marker
-                        if gtt.begin_step + len(gtt.points) < self.__data_provider.sim_data.meta.number_steps:
+                        if gtt.begin_step + len(gtt.points) < self.__scenario_data.meta.number_steps:
                             self._ax.scatter([gtt.points[-1].x], [gtt.points[-1].y],
                                              s=25, color="none", marker="o", edgecolor="black", linewidth=.5, zorder=zorder)
 
@@ -355,9 +354,9 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                 # end if
 
             elif ly == DrawLayer.UNTIL_TRAJ_LINE:
-                if self.__data_provider.sim_data.gtts is not None and len(self.__data_provider.sim_data.gtts) > self._step:
+                if self.__scenario_data.gtts is not None and len(self.__scenario_data.gtts) > self._step:
                     # Target trajectories
-                    for gtt in self.__data_provider.sim_data.gtts:
+                    for gtt in self.__scenario_data.gtts:
                         if gtt.begin_step <= self._step:
                             self._ax.plot([point.x for point in gtt.points[:self._step - gtt.begin_step + 1]], [point.y for point in gtt.points[:self._step - gtt.begin_step + 1]],
                                           color="blue", linewidth=.5, zorder=zorder, label="traj. ($t_{0..k}$)")
@@ -365,9 +364,9 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                 # end if
 
             elif ly == DrawLayer.UNTIL_TRAJ_POS:
-                if self.__data_provider.sim_data.gtts is not None and len(self.__data_provider.sim_data.gtts) > self._step:
+                if self.__scenario_data.gtts is not None and len(self.__scenario_data.gtts) > self._step:
                     # Target trajectories
-                    for gtt in self.__data_provider.sim_data.gtts:
+                    for gtt in self.__scenario_data.gtts:
                         if gtt.begin_step <= self._step:
                             self._ax.scatter([point.x for point in gtt.points[:self._step - gtt.begin_step + 1]], [point.y for point in gtt.points[:self._step - gtt.begin_step + 1]],
                                              s=25, color="none", marker="o", edgecolor="blue", linewidth=.5, zorder=zorder, label="traj. pos. ($t_{0..k}$)")
@@ -391,15 +390,15 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                 # end for
 
             elif ly == DrawLayer.UNTIL_MISSED_DET:
-                if self.__data_provider.sim_data.mds is not None:
-                    for frame in self.__data_provider.sim_data.mds[:self._step + 1]:
+                if self.__scenario_data.mds is not None:
+                    for frame in self.__scenario_data.mds[:self._step + 1]:
                         self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=12, linewidth=.5, color="black", marker="x", zorder=zorder, label="missed det. ($t_{0..k}$)")
                     # end for
                 # end if
 
             elif ly == DrawLayer.UNTIL_FALSE_ALARM:
-                if self.__data_provider.sim_data.fas is not None:
-                    for frame in self.__data_provider.sim_data.fas[:self._step + 1]:
+                if self.__scenario_data.fas is not None:
+                    for frame in self.__scenario_data.fas[:self._step + 1]:
                         self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=12, linewidth=.5, color="red", edgecolors="darkred", marker="o", zorder=zorder,
                                          label="false alarm ($t_{0..k}$)")
                     # end for
@@ -867,15 +866,12 @@ class GmPhdFilterSimulatorConfig:
 
         group.add_argument("--input", default="No file.", help="Parse detections with coordinates from INPUT_FILE.")
 
-        group.add_argument("--input_coord_system_conversion", action=self._EvalAction, comptype=CoordSysConv, choices=[str(t) for t in CoordSysConv],
-                           default=CoordSysConv.NONE,
-                           help="Defines the coordinates-conversion of the provided cordinate system into the internal system (ENU).")
-
         # File Storage group
         group = self.__parser.add_argument_group("File Storage - stores data as detections and videos to file")
 
         group.add_argument("--output", default=None,
-                           help="Sets the output file to store the (manually set or simulated) detections' coordinates to OUTPUT_FILE. Default: out.lst.")
+                           help="Sets the output file to store the (manually set or simulated) data as detections' coordinates to OUTPUT_FILE. The parts of the filename equals ?? gets replaced "
+                                "by the continuous number defined by the parameter output_seq_max. Default: Not storing any data.")
 
         group.add_argument("--output_seq_max", type=int, default=9999,
                            help="Sets the max. number to append at the end of the output filename (see parameter --output). This allows for automatically continuously named files and prevents "
@@ -886,11 +882,12 @@ class GmPhdFilterSimulatorConfig:
                                 "(to create the filename) will be N+1 with N is the highest number in the range and format given by the parameter --output_seq_max.")
 
         group.add_argument("--output_coord_system_conversion", metavar="OUTPUT_COORD_SYSTEM", action=self._EvalAction, comptype=CoordSysConv,
-                           choices=[str(t) for t in CoordSysConv], default=CoordSysConv.NONE,
+                           choices=[str(t) for t in CoordSysConv], default=CoordSysConv.ENU,
                            help="Defines the coordinates-conversion of the internal system (ENU) to the OUTPUT_COORD_SYSTEM for storing the values.")
 
         group.add_argument("--output_video", metavar="OUTPUT_FILE", default=None,
-                           help="Sets the output filename to store the video captures from the single frames of the plotting window. Default: Not storing any video.")
+                           help="Sets the output filename to store the video captures from the single frames of the plotting window. The parts of the filename equals ?? gets replaced by the "
+                                "continuous number defined by the parameter output_seq_max. Default: Not storing any video.")
 
         # Visualization group
         group = self.__parser.add_argument_group('Visualization - options for visualizing the simulated and filtered results')
@@ -983,24 +980,26 @@ def main(argv: List[str]):
 
     # Get data from a data provider
     if args.data_provider == DataProviderType.FILE_READER:
-        # Read all measurements from file
-        file_reader: FileReader = FileReader(args.input)
-        line_handler: InputLineHandlerLatLonIdx = InputLineHandlerLatLonIdx()
-        file_reader.read(line_handler)
-        data_provider = line_handler
+        scenario_data = ScenarioData().read_file(args.input)
+
+        if not scenario_data.cross_check():
+            print(f"Error while reading scenario data file {args.input}. For details see above. Program terminates.")
+            return
+        # end if
+
+        # Convert data from certain coordinate systems to ENU, which is used internally
+        if scenario_data.meta.coordinate_system == CoordSysConv.WGS84.value:
+            scenario_data = Wgs84ToEnuConverter.convert(scenario_data, args.observer)
+        # end if
 
     else:  # data_provider == DataProviderType.SIMULATOR
-        data_provider = DataProvider(f=args.f, q=args.q, dt=args.dt, t_max=args.sim_t_max, n_birth=args.n_birth, var_birth=args.var_birth, n_fa=args.n_fa, var_fa=args.var_fa,
-                                     fov=args.fov, birth_area=args.birth_area,
-                                     p_survival=args.p_survival, p_detection=args.p_detection, birth_dist=args.birth_dist, sigma_vel_x=args.sigma_vel_x, sigma_vel_y=args.sigma_vel_y,
-                                     birth_gmm=args.birth_gmm)
+        scenario_data = ScenarioDataSimulator(f=args.f, q=args.q, dt=args.dt, t_max=args.sim_t_max, n_birth=args.n_birth, var_birth=args.var_birth, n_fa=args.n_fa, var_fa=args.var_fa,
+                                              fov=args.fov, birth_area=args.birth_area,
+                                              p_survival=args.p_survival, p_detection=args.p_detection, birth_dist=args.birth_dist, sigma_vel_x=args.sigma_vel_x, sigma_vel_y=args.sigma_vel_y,
+                                              birth_gmm=args.birth_gmm).run()
     # end if
 
-    # Convert data from certain coordinate systems to ENU, which is used internally
-    if args.input_coord_system_conversion == CoordSysConv.WGS84:
-        data_provider = Wgs84ToEnuConverter(data_provider.frame_list, args.observer)
-    # end if
-    sim: GmPhdFilterSimulator = GmPhdFilterSimulator(data_provider=data_provider, output_coord_system_conversion=args.output_coord_system_conversion, fn_out=args.output,
+    sim: GmPhdFilterSimulator = GmPhdFilterSimulator(scenario_data=scenario_data, output_coord_system_conversion=args.output_coord_system_conversion, fn_out=args.output,
                                                      fn_out_video=args.output_video,
                                                      auto_step_interval=args.auto_step_interval, auto_step_autostart=args.auto_step_autostart, fov=args.fov, birth_area=args.birth_area,
                                                      limits_mode=args.limits_mode, observer=args.observer, logging=args.verbosity,

@@ -6,7 +6,7 @@ import pykwalify.core
 from filter_simulator.common import FrameList, Frame, Position
 
 
-class SimulationData:
+class ScenarioData:
     def __init__(self):
         self.meta: Optional[MetaInformation] = None
         self.ds: Optional[FrameList] = None
@@ -32,7 +32,7 @@ class SimulationData:
         # end for
     # end def
 
-    def read_file(self, fn: str):
+    def read_file(self, fn: str) -> ScenarioData:
         with open(fn) as f:
 
             docs = [doc for doc in yaml.load_all(f, Loader=yaml.FullLoader)]
@@ -92,6 +92,8 @@ class SimulationData:
                 # end if
             # end for
         # end with
+
+        return self
     # end def
 
     @staticmethod
@@ -306,22 +308,22 @@ class SimulationData:
         ##############
 
         # false-alarms, ground-truth-tracks
-        if self.fas is not None and self.gtts is not None:
-            for f, frame in enumerate(self.fas):
+        if self.mds is not None and self.gtts is not None:
+            for f, frame in enumerate(self.mds):
                 # Collect all GTT points for the current step
                 gtt_points = []
 
                 for gtt in self.gtts:
                     index = f - gtt.begin_step
 
-                    if index < len(gtt.points):
+                    if 0 <= index < len(gtt.points):
                         gtt_points.append(gtt.points[index])
                 # end for
 
-                for detection in frame:
+                for d, detection in enumerate(frame):
                     # > det in gtt
-                    if detection not in gtt_points:
-                        print(f"'false-alarms[{f}]' needs to be in any ground-truth-track at the corresponding time-step ({f}).")
+                    if not any([detection == point for point in gtt_points]):
+                        print(f"'missed-detection[{d}]' needs to be in any ground-truth-track at the corresponding time-step ({f}).")
                         return False
                 # end for
             # end for
@@ -373,7 +375,7 @@ def main():
         print(e)
     # end try
 
-    d = SimulationData()
+    d = ScenarioData()
     d.read_file("test.yaml")
     d.write_file("test_out.yaml")
     d.cross_check()

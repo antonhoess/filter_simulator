@@ -1,5 +1,5 @@
 #!/bin/bash
 
-gvfs-trash out.lst*
+gvfs-trash *.yaml
 gvfs-trash *.mp4*
 

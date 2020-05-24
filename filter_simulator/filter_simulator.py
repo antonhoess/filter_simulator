@@ -16,9 +16,10 @@ import copy
 
 from .common import Logging, SimulationDirection, Limits, Position, FrameList
 from .window_helper import WindowMode, LimitsMode, WindowModeChecker
-from .io_helper import FileWriter
-from simulation_data.data_provider_interface import IDataProvider
-from simulation_data.data_provider_converter import CoordSysConv
+from scenario_data.scenario_data_converter import CoordSysConv
+from scenario_data.scenario_data import ScenarioData
+from scenario_data.scenario_data_converter import EnuToWgs84Converter
+from .io_helper import FileHelper
 
 
 class SimStepPart(Enum):
@@ -84,9 +85,9 @@ class DragStart:
 
 
 class FilterSimulator(ABC):
-    def __init__(self, data_provider: IDataProvider, output_coord_system_conversion: CoordSysConv, fn_out: str, fn_out_video: Optional[str], auto_step_interval: int,
+    def __init__(self, scenario_data: ScenarioData, output_coord_system_conversion: CoordSysConv, fn_out: str, fn_out_video: Optional[str], auto_step_interval: int,
                  auto_step_autostart: bool, fov: Limits, limits_mode: LimitsMode, observer: Optional[Position], start_window_max: bool, logging: Logging) -> None:
-        self.__data_provider = data_provider
+        self.__scenario_data = scenario_data
         self.__output_coord_system_conversion: CoordSysConv = output_coord_system_conversion
         self.__fn_out: str = fn_out
         self.__fn_out_video: str = fn_out_video
@@ -413,28 +414,27 @@ class FilterSimulator(ABC):
 
         elif event.button == 3:  # Right click
             if WindowModeChecker.key_is_ctrl_shift(event.key):
-                self.__write_points_to_file(self.__frames, self.__output_coord_system_conversion)
+                self.__write_scenario_data_to_file()
 
             elif WindowModeChecker.key_is_ctrl_alt_shift(event.key):
                 self.__write_video_to_file(self.__fn_out_video_gen)
-
         # end if
     # end def
 
-    def __write_points_to_file(self, frames: FrameList, output_coord_system_conversion: CoordSysConv = CoordSysConv.NONE):
+    def __write_scenario_data_to_file(self):
         if self.__fn_out is not None:
-            len_n_seq_max = len(str(self.__fn_out_seq_max))
-            filename_format = f"{self.__fn_out}_{{:0{len_n_seq_max}d}}"
-            filename_search_format = f"^{re.escape(self.__fn_out)}_(\d{{{len_n_seq_max}}})$"
+            scenario_data = self.__scenario_data
+            print(self.__output_coord_system_conversion)
+            if self.__output_coord_system_conversion == CoordSysConv.WGS84:
+                scenario_data = EnuToWgs84Converter.convert(self.__scenario_data, self.__observer, in_place=False)
+            # end if
 
-            fn_out = FileWriter.get_next_sequence_filename(".", filename_format=filename_format, filename_search_format=filename_search_format,
-                                                           n_seq_max=self.__fn_out_seq_max, fill_gaps=self.__fn_out_fill_gaps)
+            fn_out = self.__get_filename(base_filename=self.__fn_out)
 
             if fn_out is not None:
-                self.__logging.print_verbose(Logging.INFO, "Write points ({} frames with {} detections) to file {}". format(len(frames), frames.get_number_of_detections(), fn_out))
-
-                file_writer = FileWriter(fn_out)
-                file_writer.write(frames, self.__observer, output_coord_system_conversion)
+                self.__logging.print_verbose(Logging.INFO, f"Write scenario data ({len(scenario_data.ds)} frames with "
+                                             f"{scenario_data.ds.get_number_of_detections()} detections) to file {fn_out}")
+                scenario_data.write_file(fn_out)
             else:
                 self.__logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename {} and a max. sequence number of {}. Try to remove some old files.".
                                              format(self.__fn_out, self.__fn_out_seq_max))
@@ -444,7 +444,7 @@ class FilterSimulator(ABC):
 
     def __setup_video(self):
         if self.__fn_out_video:
-            self.__fn_out_video_gen = self.__get_video_filename()
+            self.__fn_out_video_gen = self.__get_filename(base_filename=self.__fn_out_video)
 
             if self.__fn_out_video_gen:
                 self.__logging.print_verbose(Logging.INFO, f"Setup new movie writer to file {self.__fn_out_video_gen}")
@@ -454,12 +454,9 @@ class FilterSimulator(ABC):
         # end if
     # end def
 
-    def __get_video_filename(self) -> str:
-        len_n_seq_max = len(str(self.__fn_out_seq_max))
-        filename_format = f"{self.__fn_out_video}_{{:0{len_n_seq_max}d}}"
-        filename_search_format = f"^{re.escape(self.__fn_out_video)}_(\d{{{len_n_seq_max}}})$"
-
-        fn_out = FileWriter.get_next_sequence_filename(".", filename_format=filename_format, filename_search_format=filename_search_format,
+    def __get_filename(self, base_filename: str) -> str:
+        filename_format, filename_search_format = FileHelper.get_filename_formats(base_filename, "??", len(str(self.__fn_out_seq_max)))
+        fn_out = FileHelper.get_next_sequence_filename(".", filename_format=filename_format, filename_search_format=filename_search_format,
                                                        n_seq_max=self.__fn_out_seq_max, fill_gaps=self.__fn_out_fill_gaps)
 
         return fn_out
@@ -476,6 +473,7 @@ class FilterSimulator(ABC):
         if self.__movie_writer:
             if fn_out_video:
                 self.__logging.print_verbose(Logging.INFO, "Write video ({} frames) to file {}". format(self.__n_video_frames, fn_out_video))
+                self.__n_video_frames = 0
                 self.__movie_writer.finish()
 
                 # Setup for a new video
@@ -569,7 +567,7 @@ class FilterSimulator(ABC):
         # end def
 
         last_auto_step_time = datetime.datetime.now()
-        self.__frames = self.__data_provider.sim_data.ds
+        self.__frames = self.__scenario_data.ds
 
         if len(self._frames) == 0:
             return

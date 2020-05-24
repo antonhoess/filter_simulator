@@ -61,6 +61,9 @@ class Position:
     def __repr__(self):
         return str(self)
 
+    def __eq__(self, other: Position):
+        return self.x == other.x and self.y == other.y
+
 
 class Frame:
     def __init__(self) -> None:

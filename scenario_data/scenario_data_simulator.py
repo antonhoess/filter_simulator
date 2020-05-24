@@ -10,9 +10,9 @@ import datetime
 from enum import Enum
 
 from filter_simulator.common import Limits
-from simulation_data.data_provider_interface import IDataProvider
 from gm_phd_filter import Gmm
-from simulation_data.sim_data import *
+from scenario_data.scenario_data import *
+from scenario_data.scenario_data_converter import CoordSysConv
 
 
 class BirthDistribution(Enum):
@@ -51,7 +51,7 @@ class Obj:
 # end class
 
 
-class DataProvider(IDataProvider):
+class ScenarioDataSimulator:
     def __init__(self, f: np.ndarray, q: np.ndarray, dt: float, t_max: int, n_birth: float, var_birth: float, n_fa: float, var_fa: float, fov: Limits, birth_area: Limits,
                  p_survival: float, p_detection: float, birth_dist: BirthDistribution, sigma_vel_x: float, sigma_vel_y: float, birth_gmm: Gmm):
         # Store parameters
@@ -86,24 +86,7 @@ class DataProvider(IDataProvider):
         self.__step_interval = .02  # Interval [s] between showing two subsequent steps in the plotting window.
 
         # Simulation data
-        self.__d = SimulationData()
-        self.__d.meta = MetaInformation()
-        self.__d.meta.version = "1.0"
-        self.__d.meta.number_steps = self.__t_max
-        self.__d.meta.time_delta = self.__dt
-        self.__d.ds = FrameList()
-        self.__d.fas = FrameList()
-        self.__d.mds = FrameList()
-        self.__d.gtts = []
-        self.__d.tds = None  # Will not be set here
-
-        # Calculate simulation data
-        self.__run()
-    # end def
-
-    @property
-    def sim_data(self) -> SimulationData:
-        return self.__d
+        self.__d = None
     # end def
 
     def __update_window(self, _frame):
@@ -161,7 +144,20 @@ class DataProvider(IDataProvider):
         return min_val + (max_val - min_val) * random.random()
     # end def
 
-    def __run(self):
+    def run(self) -> ScenarioData:
+        # Simulation data
+        self.__d = ScenarioData()
+        self.__d.meta = MetaInformation()
+        self.__d.meta.version = "1.0"
+        self.__d.meta.coordinate_system = CoordSysConv.ENU.value
+        self.__d.meta.number_steps = self.__t_max
+        self.__d.meta.time_delta = self.__dt
+        self.__d.ds = FrameList()
+        self.__d.fas = FrameList()
+        self.__d.mds = FrameList()
+        self.__d.gtts = []
+        self.__d.tds = None  # Will not be set here
+
         if self.__show_visu:
             # Processing thread
             t_proc: threading.Thread = threading.Thread(target=self.__processing)
@@ -182,6 +178,8 @@ class DataProvider(IDataProvider):
         else:
             self.__processing()
         # end if
+
+        return self.__d
     # end def
 
     def __processing(self):
