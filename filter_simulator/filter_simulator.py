@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import matplotlib.backend_bases
 from enum import Enum
-import re
 import datetime
 import copy
 
@@ -86,7 +85,7 @@ class DragStart:
 
 class FilterSimulator(ABC):
     def __init__(self, scenario_data: ScenarioData, output_coord_system_conversion: CoordSysConv, fn_out: str, fn_out_video: Optional[str], auto_step_interval: int,
-                 auto_step_autostart: bool, fov: Limits, limits_mode: LimitsMode, observer: Optional[Position], start_window_max: bool, logging: Logging) -> None:
+                 auto_step_autostart: bool, fov: Limits, limits_mode: LimitsMode, observer: Optional[Position], start_window_max: bool, gui: bool, logging: Logging) -> None:
         self.__scenario_data = scenario_data
         self.__output_coord_system_conversion: CoordSysConv = output_coord_system_conversion
         self.__fn_out: str = fn_out
@@ -99,6 +98,7 @@ class FilterSimulator(ABC):
         self.__auto_step: bool = auto_step_autostart  # Only sets the initial value, which can be changed later on
         self.__ax: Optional[matplotlib.axes.Axes] = None
         self.__fig: Optional[matplotlib.pyplot.figure] = None
+        self.__gui = gui
         self.__logging: Logging = logging
         self.__observer: Position = observer if observer is not None else Position(0, 0)
         self.__observer_is_set = (observer is not None)
@@ -204,36 +204,43 @@ class FilterSimulator(ABC):
         t_kbd.daemon = True
         t_kbd.start()
 
-        # Prepare GUI
-        self.__fig: plt.Figure = plt.figure()
-        self.__fig.canvas.set_window_title("State Space")
-        self.__ax = self.__fig.add_subplot(1, 1, 1)
+        if self.__gui:
+            # Prepare GUI
+            self.__fig: plt.Figure = plt.figure()
+            self.__fig.canvas.set_window_title("State Space")
+            self.__ax = self.__fig.add_subplot(1, 1, 1)
 
-        # self.cid = fig.canvas.mpl_connect('button_press_event', self._cb_button_press_event)
-        self.__fig.canvas.mpl_connect("button_press_event", self.__cb_button_press_event)
-        self.__fig.canvas.mpl_connect("button_release_event", self.__cb_button_release_event)
-        self.__fig.canvas.mpl_connect("key_press_event", self.__cb_key_press_event)
-        self.__fig.canvas.mpl_connect("key_release_event", self.__cb_key_release_event)
-        self.__fig.canvas.mpl_connect("scroll_event", self.__cb_scroll_event)
-        self.__fig.canvas.mpl_connect("motion_notify_event", self.__cb_motion_notify_event)
+            # self.cid = fig.canvas.mpl_connect('button_press_event', self._cb_button_press_event)
+            self.__fig.canvas.mpl_connect("button_press_event", self.__cb_button_press_event)
+            self.__fig.canvas.mpl_connect("button_release_event", self.__cb_button_release_event)
+            self.__fig.canvas.mpl_connect("key_press_event", self.__cb_key_press_event)
+            self.__fig.canvas.mpl_connect("key_release_event", self.__cb_key_release_event)
+            self.__fig.canvas.mpl_connect("scroll_event", self.__cb_scroll_event)
+            self.__fig.canvas.mpl_connect("motion_notify_event", self.__cb_motion_notify_event)
 
-        # Cyclic update check (but only draws, if there's something new)
-        self.__anim: matplotlib.animation.Animation = animation.FuncAnimation(self.__fig, self.__update_window_wrap, interval=100)
+            # Cyclic update check (but only draws, if there's something new)
+            self.__anim: matplotlib.animation.Animation = animation.FuncAnimation(self.__fig, self.__update_window_wrap, interval=100)
 
-        self.__setup_video()
+            self.__setup_video()
 
-        # Maximize the plotting window at program start
-        if self.__start_window_max and self.__fn_out_video is None:
-            fig_manager = plt.get_current_fig_manager()
-            if hasattr(fig_manager, 'window'):
-                fig_manager.window.showMaximized()
+            # Maximize the plotting window at program start
+            if self.__start_window_max and self.__fn_out_video is None:
+                fig_manager = plt.get_current_fig_manager()
+                if hasattr(fig_manager, 'window'):
+                    fig_manager.window.showMaximized()
+            # end if
+
+            # Show blocking window which draws the current state and handles mouse clicks
+            plt.show()
+
+            # Store video to disk using the grabbed frames
+            self.__write_video_to_file(self.__fn_out_video_gen)
+        else:
+            # Prevent the program to close immediately
+            while True:
+                time.sleep(1)
+            # end while
         # end if
-
-        # Show blocking window which draws the current state and handles mouse clicks
-        plt.show()
-
-        # Store video to disk using the grabbed frames
-        self.__write_video_to_file(self.__fn_out_video_gen)
     # end def
 
     def __cb_button_press_event(self, event: matplotlib.backend_bases.MouseEvent):
@@ -583,9 +590,10 @@ class FilterSimulator(ABC):
             for sp in self.__sim_step_part_conf.step_parts:
                 if sp == SimStepPart.DRAW:
                     # Draw - and wait until drawing has finished (do avoid changing the filter's state before it is drawn)
-                    self.__refresh.set()
-                    self.__refresh_finished.wait()
-                    self.__refresh_finished.clear()
+                    if self.__gui:
+                        self.__refresh.set()
+                        self.__refresh_finished.wait()
+                        self.__refresh_finished.clear()
 
                 elif sp == SimStepPart.WAIT_FOR_TRIGGER:
                     if self.__auto_step and self.__auto_step_interval >= 0:
@@ -650,8 +658,7 @@ class FilterSimulator(ABC):
         # Manually set points
         for frame in self.__manual_frames:
             self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=20, marker="x")
-            self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5,
-                          linestyle="--")
+            self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5, linestyle="--")
         # end for
 
         # Visualization settings (need to be set every time since they aren't permanent)
@@ -693,13 +700,6 @@ class FilterSimulator(ABC):
     def _cb_keyboard(self, cmd: str) -> None:  # Can be overloaded
         if cmd == "":
             self._next_part_step = True
-
-        elif cmd == "+":
-            pass  # XXX
-
-        elif cmd.startswith("-"):
-            pass
-            # XXX idx: int = int(cmd[1:])
         # end if
     # end def
 # end class

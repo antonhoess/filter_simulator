@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# GM-PHD implementation in python by Dan Stowell.
+# Heavily modified version of the GM-PHD implementation in python by Dan Stowell.
 # Based on the description in Vo and Ma (2006).
 # (c) 2012 Dan Stowell and Queen Mary University of London.
 # All rights reserved.
@@ -47,7 +47,7 @@ class DistMeasure(Enum):
 class GmComponent:
     """Represents a single Gaussian component, 
     with a float weight, vector location, matrix covariance.
-    Note that we don't require a GM to sum to 1, since not always about proby densities."""
+    Note that we don't require a GM to sum to 1, since not always about probability densities."""
     def __init__(self, weight, loc, cov):
         self.weight = np.float64(weight)
         self.__loc = np.array(loc, dtype=np.float64)
