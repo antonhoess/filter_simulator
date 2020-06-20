@@ -86,10 +86,31 @@ class DragStart:
 
 
 class FilterSimulatorConfig:
+    def __init__(self):
+        self._parser = None
+    # end def
+
     @staticmethod
     @abstractmethod
-    def _doeval(s: str):  # This needs to be overridden, since eval() needs the infidivual globals and locals, which are not available here.
+    def _doeval(s: str):  # This needs to be overridden, since eval() needs the indidivual globals and locals, which are not available here.
         pass
+    # end def
+
+    def help(self) -> str:
+        return self._parser.format_help()
+    # end def
+
+    def read(self, argv: List[str]):
+        args, unknown_args = self._parser.parse_known_args(argv)
+
+        if len(unknown_args) > 0:
+            print("Unknown argument(s) found:")
+            for arg in unknown_args:
+                print(arg)
+            # end for
+        # end if
+
+        return args
     # end def
 
     class _ArgumentDefaultsRawDescriptionHelpFormatter(argparse.RawDescriptionHelpFormatter, argparse.ArgumentDefaultsHelpFormatter):
@@ -262,7 +283,7 @@ class FilterSimulatorConfig:
 class FilterSimulator(ABC):
     def __init__(self, scenario_data: ScenarioData, output_coord_system_conversion: CoordSysConv, fn_out: str, fn_out_video: Optional[str], auto_step_interval: int,
                  auto_step_autostart: bool, fov: Limits, limits_mode: LimitsMode, observer: Optional[Position], start_window_max: bool, gui: bool, logging: Logging) -> None:
-        self.__scenario_data = scenario_data
+        self._scenario_data = scenario_data
         self.__output_coord_system_conversion: CoordSysConv = output_coord_system_conversion
         self.__fn_out: str = fn_out
         self.__fn_out_video: str = fn_out_video
@@ -275,7 +296,7 @@ class FilterSimulator(ABC):
         self.__ax: Optional[matplotlib.axes.Axes] = None
         self.__fig: Optional[matplotlib.pyplot.figure] = None
         self.__gui = gui
-        self.__logging: Logging = logging
+        self._logging: Logging = logging
         self.__observer: Position = observer if observer is not None else Position(0, 0)
         self.__observer_is_set = (observer is not None)
         self.__start_window_max: bool = start_window_max
@@ -283,7 +304,7 @@ class FilterSimulator(ABC):
         self.__manual_frames: FrameList = FrameList()
         self.__refresh: threading.Event = threading.Event()
         self.__refresh_finished: threading.Event = threading.Event()
-        self.__fov: Limits = fov
+        self._fov: Limits = fov
         self.__det_limits: Limits = copy.deepcopy(fov)
         self.__limits_mode: LimitsMode = limits_mode
         self.__limits_mode_inited: bool = False
@@ -520,7 +541,7 @@ class FilterSimulator(ABC):
             #   * Ctrl: Forwards
             #   * Shift: Backwards
             if event.button == 3:  # Right click
-                self.__logging.print_verbose(Logging.DEBUG, "Right click")
+                self._logging.print_verbose(Logging.DEBUG, "Right click")
 
                 if event.key == "control":
                     self.__simulation_direction = SimulationDirection.FORWARD
@@ -556,12 +577,12 @@ class FilterSimulator(ABC):
                         self.__manual_frames.add_empty_frame()
 
                     self.__manual_frames.get_current_frame().add_detection(Position(event.xdata, event.ydata))
-                    self.__logging.print_verbose(Logging.INFO, "Add point {:4f}, {:4f} to frame # {}".
-                                                 format(event.xdata, event.ydata, len(self.__manual_frames)))
+                    self._logging.print_verbose(Logging.INFO, "Add point {:4f}, {:4f} to frame # {}".
+                                                format(event.xdata, event.ydata, len(self.__manual_frames)))
 
                 elif event.key == "shift":
                     self.__manual_frames.add_empty_frame()
-                    self.__logging.print_verbose(Logging.INFO, "Add new track (# {})".format(len(self.__manual_frames)))
+                    self._logging.print_verbose(Logging.INFO, "Add new track (# {})".format(len(self.__manual_frames)))
                 # end if
 
             elif event.button == 3:  # Right click
@@ -587,7 +608,7 @@ class FilterSimulator(ABC):
             if event.key == "shift":
                 self.__auto_step = not self.__auto_step
 
-                self.__logging.print_verbose(Logging.INFO, f"Automatic stepping {'activated' if self.__auto_step else 'deactivated'}.")
+                self._logging.print_verbose(Logging.INFO, f"Automatic stepping {'activated' if self.__auto_step else 'deactivated'}.")
 
                 if self.__auto_step:
                     self.__auto_step_toggled_on = True
@@ -606,21 +627,21 @@ class FilterSimulator(ABC):
 
     def __write_scenario_data_to_file(self):
         if self.__fn_out is not None:
-            scenario_data = self.__scenario_data
+            scenario_data = self._scenario_data
             print(self.__output_coord_system_conversion)
             if self.__output_coord_system_conversion == CoordSysConv.WGS84:
-                scenario_data = EnuToWgs84Converter.convert(self.__scenario_data, self.__observer, in_place=False)
+                scenario_data = EnuToWgs84Converter.convert(self._scenario_data, self.__observer, in_place=False)
             # end if
 
             fn_out = self.__get_filename(base_filename=self.__fn_out)
 
             if fn_out is not None:
-                self.__logging.print_verbose(Logging.INFO, f"Write scenario data ({len(scenario_data.ds)} frames with "
+                self._logging.print_verbose(Logging.INFO, f"Write scenario data ({len(scenario_data.ds)} frames with "
                                              f"{scenario_data.ds.get_number_of_detections()} detections) to file {fn_out}")
                 scenario_data.write_file(fn_out)
             else:
-                self.__logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename {} and a max. sequence number of {}. Try to remove some old files.".
-                                             format(self.__fn_out, self.__fn_out_seq_max))
+                self._logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename {} and a max. sequence number of {}. Try to remove some old files.".
+                                            format(self.__fn_out, self.__fn_out_seq_max))
             # end if
         # end if
     # end def
@@ -630,7 +651,7 @@ class FilterSimulator(ABC):
             self.__fn_out_video_gen = self.__get_filename(base_filename=self.__fn_out_video)
 
             if self.__fn_out_video_gen:
-                self.__logging.print_verbose(Logging.INFO, f"Setup new movie writer to file {self.__fn_out_video_gen}")
+                self._logging.print_verbose(Logging.INFO, f"Setup new movie writer to file {self.__fn_out_video_gen}")
                 self.__movie_writer = matplotlib.animation.FFMpegWriter(codec="h264", fps=1, extra_args=["-r", "25", "-f", "mp4"])  # Set output frame rate with using the extra_args
                 self.__movie_writer.setup(fig=self.__fig, outfile=self.__fn_out_video_gen, dpi=200)
             # end if
@@ -655,7 +676,7 @@ class FilterSimulator(ABC):
     def __write_video_to_file(self, fn_out_video: str):
         if self.__movie_writer:
             if fn_out_video:
-                self.__logging.print_verbose(Logging.INFO, "Write video ({} frames) to file {}". format(self.__n_video_frames, fn_out_video))
+                self._logging.print_verbose(Logging.INFO, "Write video ({} frames) to file {}". format(self.__n_video_frames, fn_out_video))
                 self.__n_video_frames = 0
                 self.__movie_writer.finish()
 
@@ -663,7 +684,7 @@ class FilterSimulator(ABC):
                 self.__setup_video()
                 self.__grab_video_frame()  # Take the first shot now, since we'll loose it otherwise, as grabbing a frame gets triggert after moving from the current to the next step
             else:
-                self.__logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename {} and a max. sequence number of {}. Try to "
+                self._logging.print_verbose(Logging.ERROR, "Could not write a new file based on the filename {} and a max. sequence number of {}. Try to "
                                                             "remove some old files.".format(self.__fn_out_video, self.__fn_out_seq_max))
             # end if
         # end if
@@ -735,7 +756,7 @@ class FilterSimulator(ABC):
 
         elif set_fov_limits:
             # Sets the limits to the limits given by the command line parameters
-            fov = calc_plotting_borders_add_margin(self.__fov, margin_mul=margin_mul, margin_add=margin_add)
+            fov = calc_plotting_borders_add_margin(self._fov, margin_mul=margin_mul, margin_add=margin_add)
             self._ax.set_xlim(fov.x_min, fov.x_max)
             self._ax.set_ylim(fov.y_min, fov.y_max)
 
@@ -750,7 +771,7 @@ class FilterSimulator(ABC):
         # end def
 
         last_auto_step_time = datetime.datetime.now()
-        self.__frames = self.__scenario_data.ds
+        self.__frames = self._scenario_data.ds
 
         if len(self._frames) == 0:
             return
@@ -795,13 +816,13 @@ class FilterSimulator(ABC):
                     while not self.__set_next_step():
                         if not err_shown:
                             err_shown = True
-                            self.__logging.print_verbose(Logging.WARNING, "There are no more data frames to load.")
+                            self._logging.print_verbose(Logging.WARNING, "There are no more data frames to load.")
                         # end if
 
                         time.sleep(0.1)
                     # end while
 
-                    self.__logging.print_verbose(Logging.INFO, "Step {}".format(self.__step))
+                    self._logging.print_verbose(Logging.INFO, "Step {}".format(self.__step))
 
                 else:  # sp == SimulationStepPart.USER
                     self.__sim_step_part_conf.get_next_user_step()()
@@ -860,7 +881,7 @@ class FilterSimulator(ABC):
                 self._cb_keyboard(cmd)
 
             except Exception as e:
-                self.__logging.print_verbose(Logging.ERROR, "Invalid command. Exception: {}".format(e))
+                self._logging.print_verbose(Logging.ERROR, "Invalid command. Exception: {}".format(e))
             # end try
         # end while
     # end def
