@@ -9,17 +9,16 @@ from datetime import datetime
 from matplotlib.patches import Ellipse, Rectangle
 import seaborn as sns
 from enum import auto, Enum
-import argparse
 
 from filter_simulator.common import Logging, Limits, Position
-from filter_simulator.filter_simulator import SimStepPartConf, FilterSimulatorConfig
+from filter_simulator.filter_simulator import SimStepPartConf
 from scenario_data.scenario_data_converter import CoordSysConv, Wgs84ToEnuConverter
 from filter_simulator.dyn_matrix import TransitionModel, PcwConstWhiteAccelModelNd
 from gm_phd_filter import GmPhdFilter, GmComponent, Gmm, DistMeasure
 from scenario_data.scenario_data_simulator import ScenarioDataSimulator, BirthDistribution
 from filter_simulator.window_helper import LimitsMode
 from scenario_data.scenario_data import ScenarioData
-from base_filter_simulator import BaseFilterSimulator, AdditionalAxis, DrawLayerBase, SimStepPartBase, DensityDrawStyleBase
+from base_filter_simulator import BaseFilterSimulatorConfig, BaseFilterSimulator, DrawLayerBase, SimStepPartBase, DensityDrawStyleBase
 
 
 class DrawLayer(DrawLayerBase):
@@ -333,62 +332,52 @@ class GmPhdFilterSimulator(BaseFilterSimulator):
     def get_draw_layer_enum(self) -> DrawLayerBase:
         return DrawLayer
     # end def
+
+    @staticmethod
+    def get_help() -> str:
+        return GmPhdFilterSimulatorConfig().help()
+    # end def
 # end class GmPhdFilterSimulator
 
 
-class GmPhdFilterSimulatorConfig(FilterSimulatorConfig):
+class GmPhdFilterSimulatorConfig(BaseFilterSimulatorConfig):
     def __init__(self):
-        FilterSimulatorConfig.__init__(self)
+        BaseFilterSimulatorConfig.__init__(self)
 
-        self._parser = argparse.ArgumentParser(add_help=False, formatter_class=self._ArgumentDefaultsRawDescriptionHelpFormatter, epilog=GmPhdFilterSimulatorConfig.__epilog(),
-                                               description="This is a simulator for the GM-PHD-filter.")
+        self._parser.description = "This is a simulator for the GM-PHD-filter."
+        self._parser.epilog = GmPhdFilterSimulatorConfig.__epilog()
 
         # General group
-        group = self._parser.add_argument_group('General - common program settings')
-
-        group.add_argument("-h", "--help", action="help", default=argparse.SUPPRESS,
-                           help="Shows this help and exits the program.")
+        group = self._parser_groups["general"]
 
         group.add_argument("--data_provider", action=self._EvalAction, comptype=DataProviderType, choices=[str(t) for t in DataProviderType], default=DataProviderType.FILE_READER,
                            help="Sets the data provider type that defines the data source. DataProviderType.FILE_READER reads lines from file defined in --input, "
                                 "DataProviderType.SIMULATOR simulates the PHD behaviour defined by the parameters given in section SIMULATOR).")
 
-        group.add_argument("--fov", metavar=("X_MIN", "Y_MIN", "X_MAX", "Y_MAX"), action=self._LimitsAction, type=float, nargs=4, default=Limits(-10, -10, 10, 10),
-                           help="Sets the Field of View (FoV) of the scene.")
-
-        group.add_argument("--limits_mode", action=self._EvalAction, comptype=LimitsMode, choices=[str(t) for t in LimitsMode], default=LimitsMode.FOV_INIT_ONLY,
-                           help="Sets the limits mode, which defines how the limits for the plotting window are set initially and while updating the plot.")
-
-        group.add_argument("--verbosity", action=self._EvalAction, comptype=Logging, choices=[str(t) for t in Logging], default=Logging.INFO,
-                           help="Sets the programs verbosity level to VERBOSITY. If set to Logging.NONE, the program will be silent.")
-
-        group.add_argument("--observer_position", dest="observer", metavar=("LAT", "LON"), action=self._PositionAction, type=float, nargs=2, default=None,
-                           help="Sets the geodetic position of the observer in WGS84 to OBSERVER_POSITION. Can be used instead of the automatically used center of all detections or in case of only "
-                                "manually creating detections, which needed to be transformed back to WGS84.")
-
-        # PHD group
-        group = self._parser.add_argument_group('PHD - parameters for the PHD filter setup')
+        # PHD group - derived from filter group
+        group = self._parser_groups["filter"]
+        group.title = "PHD Filter - parameters for the PHD filter setup"
 
         group.add_argument("--birth_gmm", action=self._EvalListToTypeAction, comptype=GmComponent, restype=Gmm, default=Gmm([GmComponent(0.1, [0, 0], np.eye(2) * 10. ** 2)]),
                            help="List ([]) of GmComponent which defines the birth-GMM. Format for a single GmComponent: GmComponent(weight, mean, covariance_matrix).")
 
-        group.add_argument("--p_survival", metavar="[>0.0 - 1.0]", type=GmPhdFilterSimulatorConfig.InRange(float, min_ex_val=.0, max_val=1.), default=.9,
+        group.add_argument("--p_survival", metavar="[>0.0 - 1.0]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0, max_val=1.), default=.9,
                            help="Sets the survival probability for the PHD from time step k to k+1.")
 
-        group.add_argument("--n_birth", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
+        group.add_argument("--n_birth", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
                            help="Sets the mean number of newly born objects in each step to N_BIRTH.")
 
-        group.add_argument("--var_birth", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
+        group.add_argument("--var_birth", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
                            help="Sets the variance of newly born objects to VAR_BIRTH.")
 
-        group.add_argument("--p_detection", metavar="[>0.0 - 1.0]", type=GmPhdFilterSimulatorConfig.InRange(float, min_ex_val=.0, max_val=1.), default=.9,
+        group.add_argument("--p_detection", metavar="[>0.0 - 1.0]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0, max_val=1.), default=.9,
                            help="Sets the (sensor's) detection probability for the measurements.")
 
         group.add_argument("--transition_model", action=self._EvalAction, comptype=TransitionModel, choices=[str(t) for t in TransitionModel], default=TransitionModel.INDIVIDUAL,
                            help=f"Sets the transition model. If set to {str(TransitionModel.INDIVIDUAL)}, the matrices F (see paraemter --mat_f) and Q (see paraemter --mat_q) need to be specified. "
                                 f"{str(TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND)} stands for Piecewise Constant Acceleration Model.")
 
-        group.add_argument("--delta_t", metavar="[>0.0 - N]", dest="dt", type=GmPhdFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
+        group.add_argument("--delta_t", metavar="[>0.0 - N]", dest="dt", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
                            help="Sets the time betwen two measurements to DELTA_T. Does not work with the --transition_model parameter set to TransitionModel.INDIVIDUAL.")
 
         group.add_argument("--mat_f", dest="f", action=self._EvalAction, comptype=np.ndarray, default=np.eye(2),
@@ -411,41 +400,33 @@ class GmPhdFilterSimulatorConfig(FilterSimulatorConfig):
                            help="Sets the variance of the acceleration's y-component to calculate the process noise covariance_matrix Q. Only evaluated when using the "
                                 "{str(TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND)} (see parameter --transition_model) and in this case ignores the value specified for Q (see parameter --mat_q).")
 
-        group.add_argument("--gate_thresh", metavar="[0.0 - 1.0]", type=GmPhdFilterSimulatorConfig.InRange(float, min_val=0, max_val=1.), default=None,
+        group.add_argument("--gate_thresh", metavar="[0.0 - 1.0]", type=BaseFilterSimulatorConfig.InRange(float, min_val=0, max_val=1.), default=None,
                            help="Sets the confidence threshold for chi^2 gating on new measurements to GATE_THRESH.")
 
-        group.add_argument("--rho_fa", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=None,
+        group.add_argument("--rho_fa", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=None,
                            help="Sets the probability of false alarms per volume unit to RHO_FA. If specified, the mean number of false alarms (see parameter --n_fa) will be recalculated "
                                 "based on RHO_FA and the FoV. ")
 
-        group.add_argument("--trunc_thresh", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1e-6,
+        group.add_argument("--trunc_thresh", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1e-6,
                            help="Sets the truncation threshold for the prunging step. GM components with weights lower than this value get directly removed.")
 
         group.add_argument("--merge_dist_measure", action=self._EvalAction, comptype=DistMeasure, choices=[str(t) for t in DistMeasure],
                            default=DistMeasure.MAHALANOBIS_MOD,
                            help="Defines the measurement for calculating the distance between two GMM components.")
 
-        group.add_argument("--merge_thresh", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=.01,
+        group.add_argument("--merge_thresh", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=.01,
                            help="Sets the merge threshold for the prunging step. GM components with a distance distance lower than this value get merged. The distacne measure is given by the "
                                 "parameter --merge_dist_measure and depending in this parameter the threashold needs to be set differently.")
 
-        group.add_argument("--max_components", metavar="[1 - N]", type=GmPhdFilterSimulatorConfig.InRange(int, min_val=1), default=100,
+        group.add_argument("--max_components", metavar="[1 - N]", type=BaseFilterSimulatorConfig.InRange(int, min_val=1), default=100,
                            help="Sets the max. number of Gm components used for the GMM representing the current PHD.")
 
-        group.add_argument("--ext_states_bias", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
+        group.add_argument("--ext_states_bias", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
                            help="Sets the bias for extracting the current states to EXT_STATES_BIAS. It works as a factor for the GM component's weights and is used, "
                                 "in case the weights are too small to reach a value higher than 0.5, which in needed to get extracted as a state.")
 
-        group.add_argument("--ext_states_use_integral", type=GmPhdFilterSimulatorConfig.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
+        group.add_argument("--ext_states_use_integral", type=BaseFilterSimulatorConfig.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
                            help="Specifies if the integral approach for extracting the current states should be used.")
-
-        group.add_argument("--gospa_c", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
-                           help="Sets the value c for GOSPA, which calculates an assignment metric between tracks and measurements. "
-                                "It serves two purposes: first, it is a distance measure where in case the distance between the two compared points is greater than c, it is classified as outlier "
-                                "and second it is incorporated inthe punishing value.")
-
-        group.add_argument("--gospa_p", metavar="[>0 - N]", type=GmPhdFilterSimulatorConfig.InRange(int, min_ex_val=0), default=1,
-                           help="Sets the value p for GOSPA, which is used to calculate the p-norm of the sum of the GOSPA error terms (distance, false alarms and missed detections).")
 
         # Data Simulator group
         group = self._parser.add_argument_group("Data Simulator - calculates detections from simulation")
@@ -453,13 +434,13 @@ class GmPhdFilterSimulatorConfig(FilterSimulatorConfig):
         group.add_argument("--birth_area", metavar=("X_MIN", "Y_MIN", "X_MAX", "Y_MAX"), action=self._LimitsAction, type=float, nargs=4, default=None,
                            help="Sets the are for newly born targets. It not set, the same limits as defined by --fov will get used.")
 
-        group.add_argument("--sim_t_max",  metavar="[0 - N]", type=GmPhdFilterSimulatorConfig.InRange(int, min_val=0), default=50,
+        group.add_argument("--sim_t_max",  metavar="[0 - N]", type=BaseFilterSimulatorConfig.InRange(int, min_val=0), default=50,
                            help="Sets the number of simulation steps to SIM_T_MAX when using the DataProviderType.SIMULATOR (see parameter --data_provider).")
 
-        group.add_argument("--n_fa", metavar="[0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, min_val=.0), default=1.,
+        group.add_argument("--n_fa", metavar="[0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_val=.0), default=1.,
                            help="Sets the mean number of false alarms in the FoV to N_FA.")
 
-        group.add_argument("--var_fa", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, min_ex_val=.0),  default=1.,
+        group.add_argument("--var_fa", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0),  default=1.,
                            help="Sets the variance of false alarms in the FoV to VAR_FA.")
 
         group.add_argument("--birth_dist", action=self._EvalAction, comptype=BirthDistribution, choices=[str(t) for t in BirthDistribution], default=BirthDistribution.UNIFORM_AREA,
@@ -468,80 +449,33 @@ class GmPhdFilterSimulatorConfig(FilterSimulatorConfig):
                                 f"--sigma_vel_x and --sigma_vel_y. If {str(BirthDistribution.GMM_FILTER)} is set, the same GMM will get used for the creating of new objects, as the filter uses for "
                                 f"their detection. This parameter only takes effect when the parameter --data_provider is set to {str(DataProviderType.SIMULATOR)}.")
 
-        group.add_argument("--sigma_vel_x", metavar="[0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, min_val=.0), default=.2,
+        group.add_argument("--sigma_vel_x", metavar="[0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_val=.0), default=.2,
                            help="Sets the variance of the velocitiy's initial x-component of a newly born object to SIGMA_VEL_X. Only takes effect if the parameter --birth_dist is set to "
                                 f"{str(BirthDistribution.UNIFORM_AREA)}.")
 
-        group.add_argument("--sigma_vel_y", metavar="[0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, min_val=.0), default=.2,
+        group.add_argument("--sigma_vel_y", metavar="[0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_val=.0), default=.2,
                            help="Sets the variance of the velocitiy's initial y-component of a newly born object to SIGMA_VEL_y. Only takes effect if the parameter --birth_dist is set to "
                                 f"{str(BirthDistribution.UNIFORM_AREA)}.")
 
         # Simulator group
-        group = self._parser.add_argument_group("Simulator - Automates the simulation")
+        # -> Nothing to add, but helper functions implemented
 
-        group.add_argument("--init_kbd_cmds", action=self._EvalListAction, comptype=str,
-                           default=[],
-                           help=f"Specifies a list of keyboard commands that will be executed only once. These commands will be executed only if and when "
-                           f"{str(SimStepPart.USER_INITIAL_KEYBOARD_COMMANDS)} is set with the parameter --sim_loop_step_parts.")
-
-        group.add_argument("--sim_loop_step_parts", metavar=f"[{{{  ','.join([str(t) for t in SimStepPart]) }}}*]", action=self._EvalListAction, comptype=SimStepPart,
-                           default=[SimStepPart.USER_INITIAL_KEYBOARD_COMMANDS, SimStepPart.USER_PREDICT_AND_UPDATE, SimStepPart.USER_PRUNE,
-                                    SimStepPart.USER_EXTRACT_STATES, SimStepPart.USER_CALC_GOSPA,
-                                    SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER, SimStepPart.LOAD_NEXT_FRAME],
-                           help=f"Sets the loops step parts and their order. This determindes how the main loop in the simulation behaves, when the current state is drawn, the user can interact, "
-                           f"etc. Be cautious that some elements need to be present to make the program work (see default value)!")
-
-        group.add_argument("--auto_step_interval", metavar="[0 - N]", type=GmPhdFilterSimulatorConfig.InRange(int, min_val=0,), default=0,
-                           help="Sets the time interval [ms] for automatic stepping of the filter.")
-
-        group.add_argument("--auto_step_autostart", type=GmPhdFilterSimulatorConfig.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
-                           help="Indicates if the automatic stepping mode will start (if properly set) at the beginning of the simulation. "
-                                "If this value is not set the automatic mode is not active, but the manual stepping mode instead.")
         # File Reader group
-        group = self._parser.add_argument_group("File Reader - reads detections from file")
-
-        group.add_argument("--input", default="No file.", help="Parse detections with coordinates from INPUT_FILE.")
+        # -> Nothing to add
 
         # File Storage group
-        group = self._parser.add_argument_group("File Storage - stores data as detections and videos to file")
-
-        group.add_argument("--output", default=None,
-                           help="Sets the output file to store the (manually set or simulated) data as detections' coordinates to OUTPUT_FILE. The parts of the filename equals ?? gets replaced "
-                                "by the continuous number defined by the parameter output_seq_max. Default: Not storing any data.")
-
-        group.add_argument("--output_seq_max", type=int, default=9999,
-                           help="Sets the max. number to append at the end of the output filename (see parameter --output). This allows for automatically continuously named files and prevents "
-                                "overwriting previously stored results. The format will be x_0000, depending on the filename and the number of digits of OUTPUT_SEQ_MAX.")
-
-        group.add_argument("--output_fill_gaps", type=GmPhdFilterSimulatorConfig.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
-                           help="Indicates if the first empty file name will be used when determining a output filename (see parameters --output and --output_seq_max) or if the next number "
-                                "(to create the filename) will be N+1 with N is the highest number in the range and format given by the parameter --output_seq_max.")
-
-        group.add_argument("--output_coord_system_conversion", metavar="OUTPUT_COORD_SYSTEM", action=self._EvalAction, comptype=CoordSysConv,
-                           choices=[str(t) for t in CoordSysConv], default=CoordSysConv.ENU,
-                           help="Defines the coordinates-conversion of the internal system (ENU) to the OUTPUT_COORD_SYSTEM for storing the values.")
-
-        group.add_argument("--output_video", metavar="OUTPUT_FILE", default=None,
-                           help="Sets the output filename to store the video captures from the single frames of the plotting window. The parts of the filename equals ?? gets replaced by the "
-                                "continuous number defined by the parameter output_seq_max. Default: Not storing any video.")
+        # -> Nothing to add
 
         # Visualization group
-        group = self._parser.add_argument_group('Visualization - options for visualizing the simulated and filtered results')
-
-        group.add_argument("--gui", type=GmPhdFilterSimulatorConfig.IsBool, nargs="?", default=True, const=False, choices=[True, False, 1, 0],
-                           help="Specifies, if the GUI should be shown und be user or just run the program. Note: if the GUI is not active, there's no interaction with possible "
-                                "and therefore anythin need to be done by command line parameters (esp. see --auto_step_autostart) or keyboard commands.")
+        group = self._parser_groups["visualization"]
 
         group.add_argument("--density_draw_style", action=self._EvalAction, comptype=DensityDrawStyle, choices=[str(t) for t in DensityDrawStyle],
                            default=DensityDrawStyle.NONE,
                            help=f"Sets the drawing style to visualizing the density/intensity map. Possible values are: {str(DensityDrawStyle.KDE)} (kernel density estimator), "
                                 f"{str(DensityDrawStyle.EVAL)} (evaluate the correct value for each cell in a grid) and {str(DensityDrawStyle.HEATMAP)} (heatmap made of sampled points from the PHD).")
 
-        group.add_argument("--n_samples_density_map", metavar="[1000-N]", type=GmPhdFilterSimulatorConfig.InRange(int, min_val=1000),  default=1000,
+        group.add_argument("--n_samples_density_map", metavar="[100 - N]", type=BaseFilterSimulatorConfig.InRange(int, min_val=1000),  default=1000,
                            help="Sets the number samples to draw from the PHD for drawing the density map. A good number might be 10000.")
-
-        group.add_argument("--n_bins_density_map", metavar="[100-N]", type=GmPhdFilterSimulatorConfig.InRange(int, min_val=100),  default=100,
-                           help="Sets the number bins for drawing the PHD density map. A good number might be 100.")
 
         group.add_argument("--draw_layers", metavar=f"[{{{  ','.join([str(t) for t in DrawLayer]) }}}*]", action=self._EvalListAction, comptype=DrawLayer,
                            default=[ly for ly in DrawLayer if ly not in[DrawLayer.ALL_TRAJ_LINE, DrawLayer.ALL_TRAJ_POS, DrawLayer.ALL_DET, DrawLayer.ALL_DET_CONN,
@@ -549,17 +483,6 @@ class GmPhdFilterSimulatorConfig(FilterSimulatorConfig):
                            help=f"Sets the list of drawing layers. Allows to draw only the required layers and in the desired order. If not set, a fixes set of layers are drawn in a fixed order. "
                            f"Example 1: [{str(DrawLayer.DENSITY_MAP)}, {str(DrawLayer.UNTIL_EST_STATE)}]\n"
                            f"Example 2: [layer for layer in DrawLayer if not layer == {str(DrawLayer.CUR_GMM_COV_ELL)} and not layer == {str(DrawLayer.CUR_GMM_COV_MEAN)}]")
-
-        group.add_argument("--show_legend", action=self._IntOrWhiteSpaceStringAction, nargs="+", default="lower right",
-                           help="If set, the legend will be shown. SHOW_LEGEND itself specifies the legend's location. The location can be specified with a number of the corresponding string from "
-                                "the following possibilities: 0 = 'best', 1 = 'upper right', 2 = 'upper left', 3 = 'lower left', 4 = 'lower right', 5 = 'right', 6 = 'center left', "
-                                "7 = 'center right', 8 = 'lower center', 9 = 'upper center', 10 = 'center'. Default: 4.")
-
-        group.add_argument("--show_colorbar", type=GmPhdFilterSimulatorConfig.IsBool, nargs="?", default=True, const=False, choices=[True, False, 1, 0],
-                           help="Specifies, if the colorbar should be shown.")
-
-        group.add_argument("--start_window_max", type=GmPhdFilterSimulatorConfig.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
-                           help="Specifies, if the plotting window will be maximized at program start. Works only if the parameter --output_video is not set.")
     # end def __init__
 
     @staticmethod
@@ -598,6 +521,18 @@ class GmPhdFilterSimulatorConfig(FilterSimulatorConfig):
                "        * CTRL + LEFT MOUSE DOWN + MOUSE MOVE: Moves the whole scene with the mouse cursor.\n" \
                "        * SHIFT + LEFT CLICK: De-/activate automatic stepping."
 
+    # end def
+
+    @staticmethod
+    def get_sim_step_part():
+        return SimStepPart
+    # end def
+
+    @staticmethod
+    def get_sim_loop_step_parts_default() -> List[SimStepPartBase]:
+        return [SimStepPart.USER_INITIAL_KEYBOARD_COMMANDS, SimStepPart.USER_PREDICT_AND_UPDATE, SimStepPart.USER_PRUNE,
+                SimStepPart.USER_EXTRACT_STATES, SimStepPart.USER_CALC_GOSPA,
+                SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER, SimStepPart.LOAD_NEXT_FRAME]
     # end def
 
     @staticmethod

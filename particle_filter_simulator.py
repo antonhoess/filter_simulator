@@ -10,15 +10,14 @@ from matplotlib.patches import Ellipse
 import seaborn as sns
 from sklearn.cluster import MeanShift
 from enum import auto
-import argparse
 
 from filter_simulator.common import Logging, Limits, Position
-from filter_simulator.filter_simulator import SimStepPartConf, FilterSimulatorConfig
+from filter_simulator.filter_simulator import SimStepPartConf
 from filter_simulator.window_helper import LimitsMode
 from scenario_data.scenario_data_converter import CoordSysConv, Wgs84ToEnuConverter
 from particle_filter import ParticleFilter
 from scenario_data.scenario_data import ScenarioData
-from base_filter_simulator import BaseFilterSimulator, AdditionalAxis, DrawLayerBase, SimStepPartBase, DensityDrawStyleBase
+from base_filter_simulator import BaseFilterSimulatorConfig, BaseFilterSimulator, DrawLayerBase, SimStepPartBase, DensityDrawStyleBase
 
 
 class DrawLayer(DrawLayerBase):
@@ -270,145 +269,81 @@ class ParticleFilterSimulator(BaseFilterSimulator):
         # end if
     # end def
 
-    def get_draw_layer_enum(self) -> DrawLayerBase:
+    @staticmethod
+    def get_draw_layer_enum() -> DrawLayerBase:
         return DrawLayer
+    # end def
+
+    @staticmethod
+    def get_help() -> str:
+        return ParticleFilterSimulatorConfig().help()
     # end def
 # end class ParticleFilterSimulator
 
 
-class ParticleFilterSimulatorConfig(FilterSimulatorConfig):
+class ParticleFilterSimulatorConfig(BaseFilterSimulatorConfig):
     def __init__(self):
-        FilterSimulatorConfig.__init__(self)
+        BaseFilterSimulatorConfig.__init__(self)
 
-        self._parser = argparse.ArgumentParser(add_help=False, formatter_class=self._ArgumentDefaultsRawDescriptionHelpFormatter, description="This is a simulator for the particle-filter.")
+        self._parser.description = "This is a simulator for the particle-filter."
 
         # General group
-        group = self._parser.add_argument_group('General - common program settings')
+        # -> Nothing to add
 
-        group.add_argument("-h", "--help", action="help", default=argparse.SUPPRESS,
-                           help="Shows this help and exits the program.")
+        # Particle filter group - derived from filter group
+        group = self._parser_groups["filter"]
+        group.title = "Particle Filter - parameters for the particle filter setup"
 
-        group.add_argument("--fov", metavar=("X_MIN", "Y_MIN", "X_MAX", "Y_MAX"), action=self._LimitsAction, type=float, nargs=4, default=Limits(-10, -10, 10, 10),
-                           help="Sets the Field of View (FoV) of the scene.")
-
-        group.add_argument("--limits_mode", action=self._EvalAction, comptype=LimitsMode, choices=[str(t) for t in LimitsMode], default=LimitsMode.FOV_INIT_ONLY,
-                           help="Sets the limits mode, which defines how the limits for the plotting window are set initially and while updating the plot.")
-
-        group.add_argument("--verbosity", action=self._EvalAction, comptype=Logging, choices=[str(t) for t in Logging], default=Logging.INFO,
-                           help="Sets the programs verbosity level to VERBOSITY. If set to Logging.NONE, the program will be silent.")
-
-        group.add_argument("--observer_position", dest="observer", metavar=("LAT", "LON"), action=self._PositionAction, type=float, nargs=2, default=None,
-                           help="Sets the geodetic position of the observer in WGS84 to OBSERVER_POSITION. Can be used instead of the automatically used center of all detections or in case of only "
-                                "manually creating detections, which needed to be transformed back to WGS84.")
-
-        # Particle filter group
-        group = self._parser.add_argument_group('Particle Filter - parameters for the particle filter setup')
-
-        group.add_argument("--sigma_gauss_kernel", metavar="[>0.0 - N]", type=ParticleFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=20.,
+        group.add_argument("--sigma_gauss_kernel", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=20.,
                            help="Sets sigma of the Gaussian importance weight kernel to SIGMA_GAUSS_KERNEL.")
 
-        group.add_argument("--n_particles", metavar="[100 - N]", type=ParticleFilterSimulatorConfig.InRange(int, min_val=100), default=100,
+        group.add_argument("--n_particles", metavar="[100 - N]", type=BaseFilterSimulatorConfig.InRange(int, min_val=100), default=100,
                            help="Sets the particle filter's number of particles to N_PARTICLES.")
 
-        group.add_argument("--particle_movement_noise", metavar="[>0.0 - N]", type=ParticleFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=.1,
+        group.add_argument("--particle_movement_noise", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=.1,
                            help="Sets the particle's movement noise to PARTICLE_MOVEMENT_NOISE")
 
-        group.add_argument("--speed", metavar="[0.0 - 1.0]", type=ParticleFilterSimulatorConfig.InRange(float, min_val=.0, max_val=1.), default=1.,
+        group.add_argument("--speed", metavar="[0.0 - 1.0]", type=BaseFilterSimulatorConfig.InRange(float, min_val=.0, max_val=1.), default=1.,
                            help="Sets the speed the particles move towards their nearest detection to SPEED.")
 
-        group.add_argument("--ext_states_ms_bandwidth", metavar="[>0.0 - N]", type=ParticleFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=None,
+        group.add_argument("--ext_states_ms_bandwidth", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=None,
                            help="Sets the mean shift bandwidth used in the RBF kernel for extracting the current states to EXT_STATES_MS_BANDWIDTH. If not given, the bandwidth is estimated.")
 
-        group.add_argument("--gospa_c", metavar="[>0.0 - N]", type=ParticleFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
-                           help="Sets the value c for GOSPA, which calculates an assignment metric between tracks and measurements. "
-                                "It serves two purposes: first, it is a distance measure where in case the distance between the two compared points is greater than c, it is classified as outlier "
-                                "and second it is incorporated inthe punishing value.")
-
-        group.add_argument("--gospa_p", metavar="[>0 - N]", type=ParticleFilterSimulatorConfig.InRange(int, min_ex_val=0), default=1,
-                           help="Sets the value p for GOSPA, which is used to calculate the p-norm of the sum of the GOSPA error terms (distance, false alarms and missed detections).")
-
         # Simulator group
-        group = self._parser.add_argument_group("Simulator - Automates the simulation")
-
-        group.add_argument("--init_kbd_cmds", action=self._EvalListAction, comptype=str,
-                           default=[],
-                           help=f"Specifies a list of keyboard commands that will be executed only once. These commands will be executed only if and when "
-                           f"{str(SimStepPart.USER_INITIAL_KEYBOARD_COMMANDS)} is set with the parameter --sim_loop_step_parts.")
-
-        group.add_argument("--sim_loop_step_parts", metavar=f"[{{{  ','.join([str(t) for t in SimStepPart]) }}}*]", action=self._EvalListAction, comptype=SimStepPart,
-                           default=[SimStepPart.USER_INITIAL_KEYBOARD_COMMANDS,
-                                    SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER, SimStepPart.LOAD_NEXT_FRAME,
-                                    SimStepPart.USER_PREDICT, SimStepPart.USER_UPDATE, SimStepPart.USER_RESAMPLE, SimStepPart.USER_EXTRACT_STATES, SimStepPart.USER_CALC_GOSPA],
-                           help=f"Sets the loops step parts and their order. This determindes how the main loop in the simulation behaves, when the current state is drawn, the user can interact, "
-                           f"etc. Be cautious that some elements need to be present to make the program work (see default value)!")
-
-        group.add_argument("--auto_step_interval", metavar="[0 - N]", type=ParticleFilterSimulatorConfig.InRange(int, min_val=0, ), default=0,
-                           help="Sets the time interval [ms] for automatic stepping of the filter.")
-
-        group.add_argument("--auto_step_autostart", type=ParticleFilterSimulatorConfig.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
-                           help="Indicates if the automatic stepping mode will start (if properly set) at the beginning of the simulation. "
-                                "If this value is not set the automatic mode is not active, but the manual stepping mode instead.")
+        # -> Nothing to add, but helper functions implemented
 
         # File Reader group
-        group = self._parser.add_argument_group("File Reader - reads detections from file")
-
-        group.add_argument("--input", default="No file.", help="Parse detections with coordinates from INPUT_FILE.")
+        # -> Nothing to add
 
         # File Storage group
-        group = self._parser.add_argument_group("File Storage - stores data as detections and videos to file")
-
-        group.add_argument("--output", default=None,
-                           help="Sets the output file to store the (manually set or simulated) data as detections' coordinates to OUTPUT_FILE. The parts of the filename equals ?? gets replaced "
-                                "by the continuous number defined by the parameter output_seq_max. Default: Not storing any data.")
-
-        group.add_argument("--output_seq_max", type=int, default=9999,
-                           help="Sets the max. number to append at the end of the output filename (see parameter --output). This allows for automatically continuously named files and prevents "
-                                "overwriting previously stored results. The format will be x_0000, depending on the filename and the number of digits of OUTPUT_SEQ_MAX.")
-
-        group.add_argument("--output_fill_gaps", type=ParticleFilterSimulatorConfig.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
-                           help="Indicates if the first empty file name will be used when determining a output filename (see parameters --output and --output_seq_max) or if the next number "
-                                "(to create the filename) will be N+1 with N is the highest number in the range and format given by the parameter --output_seq_max.")
-
-        group.add_argument("--output_coord_system_conversion", metavar="OUTPUT_COORD_SYSTEM", action=self._EvalAction, comptype=CoordSysConv,
-                           choices=[str(t) for t in CoordSysConv], default=CoordSysConv.ENU,
-                           help="Defines the coordinates-conversion of the internal system (ENU) to the OUTPUT_COORD_SYSTEM for storing the values.")
-
-        group.add_argument("--output_video", metavar="OUTPUT_FILE", default=None,
-                           help="Sets the output filename to store the video captures from the single frames of the plotting window. The parts of the filename equals ?? gets replaced by the "
-                                "continuous number defined by the parameter output_seq_max. Default: Not storing any video.")
+        # -> Nothing to add
 
         # Visualization group
-        group = self._parser.add_argument_group('Visualization - options for visualizing the simulated and filtered results')
-
-        group.add_argument("--gui", type=ParticleFilterSimulatorConfig.IsBool, nargs="?", default=True, const=False, choices=[True, False, 1, 0],
-                           help="Specifies, if the GUI should be shown und be user or just run the program. Note: if the GUI is not active, there's no interaction with possible "
-                                "and therefore anythin need to be done by command line parameters (esp. see --auto_step_autostart) or keyboard commands.")
+        group = self._parser_groups["visualization"]
 
         group.add_argument("--density_draw_style", action=self._EvalAction, comptype=DensityDrawStyle, choices=[str(t) for t in DensityDrawStyle],
                            default=DensityDrawStyle.NONE,
                            help=f"Sets the drawing style to visualizing the density/intensity map. Possible values are: {str(DensityDrawStyle.KDE)} (kernel density estimator) and "
                                 f"{str(DensityDrawStyle.EVAL)} (evaluate the correct value for each cell in a grid).")
 
-        group.add_argument("--n_bins_density_map", metavar="[100-N]", type=ParticleFilterSimulatorConfig.InRange(int, min_val=100), default=100,
-                           help="Sets the number bins for drawing the PHD density map. A good number might be 100.")
-
         group.add_argument("--draw_layers", metavar=f"[{{{  ','.join([str(t) for t in DrawLayer]) }}}*]", action=self._EvalListAction, comptype=DrawLayer,
                            default=[ly for ly in DrawLayer if ly not in [DrawLayer.ALL_TRAJ_LINE, DrawLayer.ALL_TRAJ_POS, DrawLayer.ALL_DET, DrawLayer.ALL_DET_CONN]],
                            help=f"Sets the list of drawing layers. Allows to draw only the required layers and in the desired order. If not set, a fixes set of layers are drawn in a fixed order. "
                            f"Example 1: [{str(DrawLayer.DENSITY_MAP)}, {str(DrawLayer.PARTICLES)}]\n"
                            f"Example 2: [layer for layer in DrawLayer if not layer == {str(DrawLayer.ALL_DET)} and not layer == {str(DrawLayer.ALL_DET_CONN)}]")
-
-        group.add_argument("--show_legend", action=self._IntOrWhiteSpaceStringAction, nargs="+", default="lower right",
-                           help="If set, the legend will be shown. SHOW_LEGEND itself specifies the legend's location. The location can be specified with a number of the corresponding string from "
-                                "the following possibilities: 0 = 'best', 1 = 'upper right', 2 = 'upper left', 3 = 'lower left', 4 = 'lower right', 5 = 'right', 6 = 'center left', "
-                                "7 = 'center right', 8 = 'lower center', 9 = 'upper center', 10 = 'center'. Default: 4.")
-
-        group.add_argument("--show_colorbar", type=ParticleFilterSimulatorConfig.IsBool, nargs="?", default=True, const=False, choices=[True, False, 1, 0],
-                           help="Specifies, if the colorbar should be shown.")
-
-        group.add_argument("--start_window_max", type=ParticleFilterSimulatorConfig.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
-                           help="Specifies, if the plotting window will be maximized at program start. Works only if the parameter --output_video is not set.")
     # end def __init__
+
+    @staticmethod
+    def get_sim_step_part():
+        return SimStepPart
+    # end def
+
+    @staticmethod
+    def get_sim_loop_step_parts_default() -> List[SimStepPartBase]:
+        return [SimStepPart.USER_INITIAL_KEYBOARD_COMMANDS,
+                SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER, SimStepPart.LOAD_NEXT_FRAME,
+                SimStepPart.USER_PREDICT, SimStepPart.USER_UPDATE, SimStepPart.USER_RESAMPLE, SimStepPart.USER_EXTRACT_STATES, SimStepPart.USER_CALC_GOSPA]
+    # end def
 
     @staticmethod
     def _doeval(s: str):

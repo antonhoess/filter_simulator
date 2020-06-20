@@ -3,6 +3,23 @@ Example call PHD filter
 gm_phd_filter_simulator.py --data_provider="DataProviderType.SIMULATOR" --input_coord_system_conversion="CoordSysConv.NONE" --output_coord_system_conversion="CoordSysConv.NONE" --output_video_="phd_fitler_sim.mp4" --observer_position 0 0 --verbosity=Logging.INFO --sim_t_max=50 --limits -100 -100 100 100 --limits_mode=LimitsMode.MANUAL_AREA_INIT_ONLY --birth_gmm="[GmComponent(0.1, np.zeros(4), np.diag(np.repeat(10000., 4)))]" --p_survival=0.9 --p_detection=0.9 --transition_model=TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND --delta_t=1.0 --mat_f="np.block([[np.eye(2), np.eye(2)], [np.eye(2) * 0., np.eye(2)]])" --mat_q="np.eye(4) * 0." --mat_h="np.block([np.eye(2), np.eye(2) *0.])" --mat_r="np.eye(2) * 10.1" --sigma_vel_x=3. --sigma_vel_y=3. --sigma_accel_x=.7 --sigma_accel_y=.7 --clutter=1 --trunc_thresh=1e-6 --merge_thresh=1e-2 --max_components=100 --ext_states_bias=1000. --ext_states_use_integral=1 --density_draw_style=DensityDrawStyle.EVAL --n_samples_density_map=1000 --n_bins_density_map=300 --draw_layers="[layer for layer in DrawLayer if not layer == DrawLayer.GMM_COV_ELL and not layer == DrawLayer.GMM_COV_MEAN and not layer == DrawLayer.ALL_DET_CONN]" --input=detections/manual_3_targets_split_merge.det --auto_step_interval=-1
 
 
+
+Create documentation
+--------------------
+# Strip type hints, since the used tool cannot handle it
+find . -type f -name '*.py' -print0 | xargs --null -I{} bash -c 'strip-hints --no-ast {} > $(dirname {})/__xxx__$(basename {}); mv $(dirname {})/__xxx__$(basename {}) $(dirname {})/$(basename {})' \;
+
+# Show the list of conda environments
+conda env list
+
+# Activate that environment, that belongs to the project. This is neccessary to provide the epydoc tool all modules.
+activate /opt/anaconda3/envs/particle_filter.py
+
+# Get all files in the project folder and pass it to the epydoc tool, which then generates the output document. Unfortunately the tool needs to be called once per output type.
+find . -name '*.py' -exec epydoc --html --graph=all {} +
+find . -name '*.py' -exec epydoc --pdf --graph=all {} +
+
+
 ToDos
 -----
 * Use "import logging" instead of my own logging system?
