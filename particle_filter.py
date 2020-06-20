@@ -59,7 +59,7 @@ class Particle:
 
 
 class ParticleFilter:
-    def __init__(self, n_part: int, s_gauss: float, noise: float, speed: float, limits: Limits, logging: Logging):
+    def __init__(self, n_part: int, s_gauss: float, noise: float, speed: float, fov: Limits, logging: Logging):
         self.__n_part: int = n_part
         self.__s_gauss: float = s_gauss
         self.__noise: float = noise
@@ -68,98 +68,104 @@ class ParticleFilter:
         # weight will be less
         self.__speed: float = speed
         self.__resampling: bool = True
-        self.__det_borders: Limits = limits
+        self.__det_borders: Limits = fov
         self.__logging: Logging = logging
         self.__cur_frame: Optional[Frame] = None
         self.__particles: List[Particle] = Particle.create_random(self.__n_part, self.__det_borders)
 
     @property
-    def _particles(self) -> List[Particle]:
+    def particles(self) -> List[Particle]:
         return self.__particles
 
     @property
-    def _s_gauss(self) -> float:
+    def s_gauss(self) -> float:
         return self.__s_gauss
 
     @property
-    def _cur_frame(self) -> Optional[Frame]:
+    def cur_frame(self) -> Optional[Frame]:
         return self.__cur_frame
 
-    @_cur_frame.setter
-    def _cur_frame(self, value: Optional[Frame]) -> None:
+    @cur_frame.setter
+    def cur_frame(self, value: Optional[Frame]) -> None:
         self.__cur_frame = value
 
-    def _update(self):
+    def update(self):
         # Update particle weight according to how good every particle matches the nearest detection
-        for p in self.__particles:
-            # Use the detection position nearest to the current particle
-            p_d_min: Optional[float] = None
+        if len(self.__cur_frame) > 0:
+            for p in self.__particles:
+                # Use the detection position nearest to the current particle
+                p_d_min: Optional[float] = None
 
-            for det in self.__cur_frame:
-                d_x: float = p.x - det.x
-                d_y: float = p.y - det.y
-                p_d: float = math.sqrt(d_x * d_x + d_y * d_y)
+                for det in self.__cur_frame:
+                    d_x: float = p.x - det.x
+                    d_y: float = p.y - det.y
+                    p_d: float = math.sqrt(d_x * d_x + d_y * d_y)
 
-                if p_d_min is None or p_d < p_d_min:
-                    p_d_min = p_d
-                # end if
+                    if p_d_min is None or p_d < p_d_min:
+                        p_d_min = p_d
+                    # end if
+                # end for
+
+                p.w = self._w_gauss(p_d_min, self.__s_gauss)
             # end for
+        # end if
+    # end def
 
-            p.w = self.__w_gauss(p_d_min, self.__s_gauss)
-        # end for
+    def predict(self):
+        # Move all particles according to belief of movement
+        if len(self.__cur_frame) > 0:
+            for p in self.__particles:
+                p_x = p.x
+                p_y = p.y
 
-    def _predict(self):
-        # Move all particles according to belief of movemen
-        for p in self.__particles:
-            p_x = p.x
-            p_y = p.y
+                idx: Optional[int] = None
+                p_d_min: float = .0
 
-            idx: Optional[int] = None
-            p_d_min: float = .0
+                # Determine detection nearest to the current particle
+                for _idx, det in enumerate(self.__cur_frame):
+                    d_x: float = (det.x - p.x)
+                    d_y: float = (det.y - p.y)
+                    p_d: float = math.sqrt(d_x * d_x + d_y * d_y)
 
-            # Determine detection nearest to the current particle
-            for _idx, det in enumerate(self.__cur_frame):
+                    if idx is None or p_d < p_d_min:
+                        idx = _idx
+                        p_d_min = p_d
+                    # end if
+                # end for
+
+                # Calc distance and angle to nearest detection
+                det = self.__cur_frame[idx]
                 d_x: float = (det.x - p.x)
                 d_y: float = (det.y - p.y)
+
                 p_d: float = math.sqrt(d_x * d_x + d_y * d_y)
+                angle: float = math.atan2(d_y, d_x)
 
-                if idx is None or p_d < p_d_min:
-                    idx = _idx
-                    p_d_min = p_d
+                # Use a convex combination of...
+                # .. the particles speed
+                d_x = self.__speed * p_d * math.cos(angle)
+                d_y = self.__speed * p_d * math.sin(angle)
+
+                # .. and the 'speed', the particle progresses towards the new detection
+                if self.__use_speed:
+                    d_x += (1 - self.__speed) * p.vx
+                    d_y += (1 - self.__speed) * p.vy
                 # end if
+
+                # Move particle towards nearest detection
+                p.move_by(d_x, d_y)
+
+                # Calc particle speed for next time step
+                p.vx = p.x - p_x
+                p.vy = p.y - p_y
+
+                # Add some noise for more stability
+                p.move_by(*self._create_gaussian_noise(self.__noise, 0, 0))
             # end for
+        # end if
+    # end def
 
-            # Calc distance and andle to nearest detection
-            det = self.__cur_frame[idx]
-            d_x: float = (det.x - p.x)
-            d_y: float = (det.y - p.y)
-
-            p_d: float = math.sqrt(d_x * d_x + d_y * d_y)
-            angle: float = math.atan2(d_y, d_x)
-
-            # Use a convex combination of...
-            # .. the particles speed
-            d_x = self.__speed * p_d * math.cos(angle)
-            d_y = self.__speed * p_d * math.sin(angle)
-
-            # .. and the 'speed', the particle progresses towards the new detection
-            if self.__use_speed:
-                d_x += (1 - self.__speed) * p.vx
-                d_y += (1 - self.__speed) * p.vy
-            # end if
-
-            # Move particle towards nearest detection
-            p.move_by(d_x, d_y)
-
-            # Calc particle speed for next time step
-            p.vx = p.x - p_x
-            p.vy = p.y - p_y
-
-            # Add some noise for more stability
-            p.move_by(*self.__create_gaussian_noise(self.__noise, 0, 0))
-        # end for
-
-    def _resample(self):
+    def resample(self):
         # Resampling
         if self.__resampling:
             new_particles: List[Particle] = []
@@ -189,7 +195,7 @@ class ParticleFilter:
                     new_particle.w = 1.
                 # end if
 
-                new_particle.move_by(*self.__create_gaussian_noise(self.__noise, 0, 0))
+                new_particle.move_by(*self._create_gaussian_noise(self.__noise, 0, 0))
                 new_particles.append(new_particle)
             # end for
 
@@ -199,16 +205,16 @@ class ParticleFilter:
     # end def
 
     @staticmethod
-    def __create_noise(level: float, *coords) -> List[float]:
+    def _create_noise(level: float, *coords) -> List[float]:
         return [x + random.uniform(-level, level) for x in coords]
 
     @staticmethod
-    def __create_gaussian_noise(level: float, *coords) -> List[float]:
+    def _create_gaussian_noise(level: float, *coords) -> List[float]:
         return [x + np.random.normal(.0, level) for x in coords]
 
     # Gaussian kernel to transform values near the particle => 1, further away => 0
     @staticmethod
-    def __w_gauss(x: float, sigma: float) -> float:
+    def _w_gauss(x: float, sigma: float) -> float:
         g = math.e ** -(x * x / (2 * sigma * sigma))
 
         return g

@@ -7,18 +7,16 @@ import random
 import numpy as np
 from datetime import datetime
 import matplotlib.gridspec
-import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse, Rectangle
 from matplotlib.legend_handler import HandlerPatch
 import seaborn as sns
 from enum import auto, Enum, IntEnum
 import argparse
-from distutils.util import strtobool
 # import os
 # os.environ['COLUMNS'] = "120"
 
 from filter_simulator.common import Logging, Limits, Position
-from filter_simulator.filter_simulator import FilterSimulator, SimStepPartConf
+from filter_simulator.filter_simulator import FilterSimulator, SimStepPartConf, FilterSimulatorConfig
 from filter_simulator.gospa import Gospa, GospaResult
 from scenario_data.scenario_data_converter import CoordSysConv, Wgs84ToEnuConverter
 from filter_simulator.dyn_matrix import TransitionModel, PcwConstWhiteAccelModelNd
@@ -48,7 +46,7 @@ class DrawLayer(IntEnum):
 # end class
 
 
-class PhdFilterSimStepPart(Enum):
+class SimStepPart(Enum):
     DRAW = 0  # Draw the current scene
     WAIT_FOR_TRIGGER = 1  # Wait for user input to continue with the next step
     LOAD_NEXT_FRAME = 2  # Load the next data (frame)
@@ -80,7 +78,7 @@ class AdditionalAxis(Enum):
 # end class
 
 
-class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
+class GmPhdFilterSimulator(FilterSimulator):
     def __init__(self, scenario_data: ScenarioData, output_coord_system_conversion: CoordSysConv,
                  fn_out: str, fn_out_video: Optional[str], auto_step_interval: int, auto_step_autostart: bool, fov: Limits, birth_area: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
                  birth_gmm: List[GmComponent], p_survival: float, p_detection: float,
@@ -89,14 +87,15 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                  ext_states_bias: float, ext_states_use_integral: bool,
                  gospa_c: float, gospa_p: int,
                  gui: bool, density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int,
-                 draw_layers: Optional[List[DrawLayer]], sim_loop_step_parts: List[PhdFilterSimStepPart], show_legend: Optional[Union[int, str]], show_colorbar: bool, start_window_max: bool,
+                 draw_layers: Optional[List[DrawLayer]], sim_loop_step_parts: List[SimStepPart], show_legend: Optional[Union[int, str]], show_colorbar: bool, start_window_max: bool,
                  init_kbd_cmds: List[str]):
 
-        self.__sim_loop_step_parts: List[PhdFilterSimStepPart] = sim_loop_step_parts  # Needs to be set before calling the contructor of the FilterSimulator, since it already needs this values there
+        self.__sim_loop_step_parts: List[SimStepPart] = sim_loop_step_parts  # Needs to be set before calling the contructor of the FilterSimulator, since it already needs this values there
 
         FilterSimulator.__init__(self, scenario_data, output_coord_system_conversion, fn_out, fn_out_video, auto_step_interval, auto_step_autostart,
                                  fov, limits_mode, observer, start_window_max, gui, logging)
-        GmPhdFilter.__init__(self, birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, rho_fa=rho_fa, gate_thresh=gate_thresh, logging=logging)
+
+        self.f = GmPhdFilter(birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, rho_fa=rho_fa, gate_thresh=gate_thresh, logging=logging)
 
         self.__scenario_data: ScenarioData = scenario_data
         self.__trunc_thresh: float = trunc_thresh
@@ -133,28 +132,28 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         sim_step_part_conf = SimStepPartConf()
 
         for step_part in self.__sim_loop_step_parts:
-            if step_part is PhdFilterSimStepPart.DRAW:
+            if step_part is SimStepPart.DRAW:
                 sim_step_part_conf.add_draw_step()
 
-            elif step_part is PhdFilterSimStepPart.WAIT_FOR_TRIGGER:
+            elif step_part is SimStepPart.WAIT_FOR_TRIGGER:
                 sim_step_part_conf.add_wait_for_trigger_step()
 
-            elif step_part is PhdFilterSimStepPart.LOAD_NEXT_FRAME:
+            elif step_part is SimStepPart.LOAD_NEXT_FRAME:
                 sim_step_part_conf.add_load_next_frame_step()
 
-            elif step_part is PhdFilterSimStepPart.USER_PREDICT_AND_UPDATE:
+            elif step_part is SimStepPart.USER_PREDICT_AND_UPDATE:
                 sim_step_part_conf.add_user_step(self.__sim_loop_predict_and_update)
 
-            elif step_part is PhdFilterSimStepPart.USER_PRUNE:
+            elif step_part is SimStepPart.USER_PRUNE:
                 sim_step_part_conf.add_user_step(self.__sim_loop_prune)
 
-            elif step_part is PhdFilterSimStepPart.USER_EXTRACT_STATES:
+            elif step_part is SimStepPart.USER_EXTRACT_STATES:
                 sim_step_part_conf.add_user_step(self.__sim_loop_extract_states)
 
-            elif step_part is PhdFilterSimStepPart.USER_CALC_GOSPA:
+            elif step_part is SimStepPart.USER_CALC_GOSPA:
                 sim_step_part_conf.add_user_step(self.__sim_loop_calc_gospa)
 
-            elif step_part is PhdFilterSimStepPart.USER_INITIAL_KEYBOARD_COMMANDS:
+            elif step_part is SimStepPart.USER_INITIAL_KEYBOARD_COMMANDS:
                 sim_step_part_conf.add_user_step(self.__sim_loop_initial_keyboard_commands)
 
             else:
@@ -169,14 +168,14 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         self.__last_step_part = "Predict + Update"
 
         if self._step < 0:
-            self._predict_and_update([])
+            self.f.predict_and_update([])
 
         else:
             # Set current frame
-            self._cur_frame = self._frames[self._step]
+            self.f.cur_frame = self._frames[self._step]
 
             # Predict and update
-            self._predict_and_update([np.array([det.x, det.y]) for det in self._cur_frame])
+            self.f.predict_and_update([np.array([det.x, det.y]) for det in self.f.cur_frame])
         # end if
     # end def
 
@@ -185,7 +184,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
         if self._step >= 0:
             # Prune
-            self._prune(trunc_thresh=self.__trunc_thresh, merge_dist_measure=self.__merge_dist_measure, merge_thresh=self.__merge_thresh, max_components=self.__max_components)
+            self.f.prune(trunc_thresh=self.__trunc_thresh, merge_dist_measure=self.__merge_dist_measure, merge_thresh=self.__merge_thresh, max_components=self.__max_components)
         # end if
     # end def
 
@@ -194,7 +193,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
         if self._step >= 0:
             # Extract states
-            ext_states = self._extract_states(bias=self.__ext_states_bias, use_integral=self.__ext_states_use_integral)
+            ext_states = self.f.extract_states(bias=self.__ext_states_bias, use_integral=self.__ext_states_use_integral)
             self.__remove_duplikate_states(ext_states)
             self.__ext_states.append(ext_states)
         # end if
@@ -258,7 +257,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
         # Code taken from eval_grid_2d()
         points = np.stack((x, y), axis=-1).reshape(-1, 2)
 
-        vals = self._gmm.eval_list(points, which_dims=(0, 1))
+        vals = self.f.gmm.eval_list(points, which_dims=(0, 1))
 
         return np.array(vals).reshape(x.shape)
 
@@ -315,7 +314,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 
         self._fig.suptitle("GM-PHD Filter Simulator")
         self._ax.set_title(f"Sim-Step: {self._step if self._step >= 0 else '-'}, Sim-SubStep: {self.__last_step_part}, # Est. States: "
-                           f"{len(self.__ext_states[-1]) if len(self.__ext_states) > 0 else '-'}, # GMM-Components: {len(self._gmm)}, # GOSPA: "
+                           f"{len(self.__ext_states[-1]) if len(self.__ext_states) > 0 else '-'}, # GMM-Components: {len(self.f.gmm)}, # GOSPA: "
                            f"{self.__gospa_values[-1] if len(self.__gospa_values) > 0 else '-':.04}", fontsize=8)
 
         # cmap = "Greys"
@@ -334,8 +333,8 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
             if ly == DrawLayer.DENSITY_MAP:
                 # Draw density map
                 if self.__density_draw_style == DensityDrawStyle.KDE:
-                    if len(self._gmm) > 0:
-                        samples = self._gmm.samples(self.__n_samples_density_map)
+                    if len(self.f.gmm) > 0:
+                        samples = self.f.gmm.samples(self.__n_samples_density_map)
                         x = [s[0] for s in samples]
                         y = [s[1] for s in samples]
                         plot = sns.kdeplot(x, y, shade=True, ax=self._ax, shade_lowest=False, cmap=cmap, cbar=(not self.__colorbar_is_added), zorder=zorder)  # Colorbar instead of label
@@ -347,7 +346,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                     plot = self._ax.contourf(x, y, z, 100, cmap=cmap, zorder=zorder)  # Colorbar instead of label
 
                 elif self.__density_draw_style == DensityDrawStyle.HEATMAP:
-                    samples = self.__gmm.samples(self.__n_samples_density_map)
+                    samples = self.f.gmm.samples(self.__n_samples_density_map)
                     det_limits = self._det_limits
                     plot = self._ax.hist2d([s[0] for s in samples], [s[1] for s in samples], bins=self.__n_bins_density_map,
                                            range=[[det_limits.x_min, det_limits.x_max], [det_limits.y_min, det_limits.y_max]], density=False, cmap=cmap, zorder=zorder)  # Colorbar instead of label
@@ -400,7 +399,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                 # end if
 
             elif ly == DrawLayer.UNTIL_TRAJ_LINE:
-                if self.__scenario_data.gtts is not None and len(self.__scenario_data.gtts) > self._step:
+                if self.__scenario_data.gtts is not None:
                     # Target trajectories
                     for gtt in self.__scenario_data.gtts:
                         if gtt.begin_step <= self._step:
@@ -410,7 +409,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                 # end if
 
             elif ly == DrawLayer.UNTIL_TRAJ_POS:
-                if self.__scenario_data.gtts is not None and len(self.__scenario_data.gtts) > self._step:
+                if self.__scenario_data.gtts is not None:
                     # Target trajectories
                     for gtt in self.__scenario_data.gtts:
                         if gtt.begin_step <= self._step:
@@ -451,22 +450,22 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                 # end if
 
             elif ly == DrawLayer.CUR_GMM_COV_ELL:
-                if self._cur_frame is not None:
+                if self.f.cur_frame is not None:
                     # GM-PHD components covariance ellipses
-                    for comp in self._gmm:
+                    for comp in self.f.gmm:
                         ell = self.__get_cov_ellipse_from_comp(comp, 1., facecolor='none', edgecolor="black", linewidth=.5, zorder=zorder, label="gmm cov. ell.")
                         self._ax.add_patch(ell)
                     # end for
                 # end if
 
             elif ly == DrawLayer.CUR_GMM_COV_MEAN:
-                if self._cur_frame is not None:
+                if self.f.cur_frame is not None:
                     # GM-PHD components means
-                    self._ax.scatter([comp.loc[0] for comp in self._gmm], [comp.loc[1] for comp in self._gmm], s=5, edgecolor="blue", marker="o", zorder=zorder, label="gmm comp. mean")
+                    self._ax.scatter([comp.loc[0] for comp in self.f.gmm], [comp.loc[1] for comp in self.f.gmm], s=5, edgecolor="blue", marker="o", zorder=zorder, label="gmm comp. mean")
                 # end if
 
             elif ly == DrawLayer.CUR_EST_STATE:
-                if self._cur_frame is not None:
+                if self.f.cur_frame is not None:
                     # Estimated states
                     if len(self.__ext_states) > 0:
                         est_items = self.__ext_states[-1]
@@ -476,7 +475,7 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                 # end if
 
             elif ly == DrawLayer.UNTIL_EST_STATE:
-                if self._cur_frame is not None:
+                if self.f.cur_frame is not None:
                     # Estimated states
                     est_items = [est_item for est_items in self.__ext_states for est_item in est_items]
                     self._ax.scatter([est_item[0] for est_item in est_items], [est_item[1] for est_item in est_items], s=10, c="gold", edgecolor="black", linewidths=.2, marker="o", zorder=zorder,
@@ -484,9 +483,9 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
                 # end if
 
             elif ly == DrawLayer.CUR_DET:
-                if self._cur_frame is not None:
+                if self.f.cur_frame is not None:
                     # Current detections
-                    self._ax.scatter([det.x for det in self._cur_frame], [det.y for det in self._cur_frame], s=70, c="red", linewidth=.5, marker="x", zorder=zorder, label="det. ($t_k$)")
+                    self._ax.scatter([det.x for det in self.f.cur_frame], [det.y for det in self.f.cur_frame], s=70, c="red", linewidth=.5, marker="x", zorder=zorder, label="det. ($t_k$)")
                 # end if
             # end if
         # end for
@@ -670,212 +669,10 @@ class GmPhdFilterSimulator(FilterSimulator, GmPhdFilter):
 # end class GmPhdFilterSimulator
 
 
-class GmPhdFilterSimulatorConfig:
-    class _ArgumentDefaultsRawDescriptionHelpFormatter(argparse.RawDescriptionHelpFormatter, argparse.ArgumentDefaultsHelpFormatter):
-        def _split_lines(self, text, width):
-            return super()._split_lines(text, width) + ['']  # Add empty line between the entries
-    # end class
-
-    class _EvalAction(argparse.Action):
-        def __init__(self, option_strings, dest, nargs=None, const=None, default=None, type=None, choices=None, required=False, help=None, metavar=None, comptype=None):
-            argparse.Action.__init__(self, option_strings, dest, nargs, const, default, type, choices, required, help, metavar)
-            self.comptype = comptype
-        # end def
-
-        def __call__(self, parser, namespace, values, option_string=None, comptype=None):
-            x = self.silent_eval(values)
-
-            if isinstance(x, self.comptype):
-                setattr(namespace, self.dest, x)
-            # end if
-        # end def
-
-        @staticmethod
-        def silent_eval(expr: str):
-            res = None
-
-            try:
-                res = eval(expr)
-            except SyntaxError:
-                pass
-            except AttributeError:
-                pass
-            # end try
-
-            return res
-        # end def
-    # end class
-
-    class _EvalListAction(_EvalAction):
-        def __call__(self, parser, namespace, values, option_string=None, comptype=None):
-            x = self.silent_eval(values)
-
-            if isinstance(x, list) and all(isinstance(item, self.comptype) for item in x):
-                setattr(namespace, self.dest, x)
-            # end if
-        # end def
-    # end class
-
-    class _EvalListToTypeAction(_EvalAction):
-        def __init__(self, option_strings, dest, nargs=None, const=None, default=None, type=None, choices=None, required=False, help=None, metavar=None, comptype=None, restype=None):
-            GmPhdFilterSimulatorConfig._EvalAction.__init__(self, option_strings, dest, nargs, const, default, type, choices, required, help, metavar, comptype)
-            self.restype = restype
-        # end def
-
-        def __call__(self, parser, namespace, values, option_string=None, comptype=None, restype=None):
-            x = self.silent_eval(values)
-
-            if isinstance(x, list) and all(isinstance(item, self.comptype) for item in x):
-                setattr(namespace, self.dest, self.restype(x))
-            # end if
-        # end def
-    # end class
-
-    class _LimitsAction(argparse.Action):
-        def __call__(self, parser, namespace, values, option_string=None):
-            x = Limits(*[float(x) for x in values])
-            setattr(namespace, self.dest, x)
-        # end def
-    # end class
-
-    class _PositionAction(argparse.Action):
-        def __call__(self, parser, namespace, values, option_string=None):
-            x = Position(*[float(x) for x in values])
-            setattr(namespace, self.dest, x)
-        # end def
-    # end class
-
-    class _IntOrWhiteSpaceStringAction(argparse.Action):
-        def __call__(self, parser, namespace, values, option_string=None):
-            x = ' '.join(values)
-            setattr(namespace, self.dest, self.int_or_str(x))
-        # end def
-
-        @staticmethod
-        def int_or_str(arg: str):
-            try:
-                res = int(arg)
-            except ValueError:
-                res = arg
-            # end if
-
-            return res
-        # end def
-    # end class
-
-    class InRange:
-        def __init__(self, dtype, min_val=None, max_val=None, min_ex_val=None, max_ex_val=None, excl=False):
-            self.__dtype = dtype
-            self.__min_val = min_val
-            self.__max_val = max_val
-            self.__min_ex_val = min_ex_val
-            self.__max_ex_val = max_ex_val
-            self.__excl = excl
-
-            # The min-ex and max-ax values outplay the non-ex-values which just will be ignored
-            if min_ex_val is not None:
-                self.__min_val = None
-            # end if
-
-            if max_ex_val is not None:
-                self.__max_val = None
-            # end if
-        # end def
-
-        def __str__(self):
-            elements = list()
-            elements.append(f"dtype={type(self.__dtype()).__name__}")
-            elements.append(f"min_val={self.__min_val}" if self.__min_val is not None else None)
-            elements.append(f"min_ex_val={self.__min_ex_val}" if self.__min_ex_val is not None else None)
-            elements.append(f"max_val={self.__max_val}" if self.__max_val is not None else None)
-            elements.append(f"max_ex_val={self.__max_ex_val}" if self.__max_ex_val is not None else None)
-            elements.append(f"excl={self.__excl}" if self.__excl else None)
-
-            elements = [e for e in elements if e is not None]
-
-            return f"InRange({', '.join(elements)})"
-        # end def
-
-        def __repr__(self):
-            return str(self)
-        # end def
-
-        def __call__(self, x):
-            x = self.__dtype(x)
-
-            err = False
-
-            if self.__min_val is not None and x < self.__min_val or \
-                    self.__min_ex_val is not None and x <= self.__min_ex_val or \
-                    self.__max_val is not None and x > self.__max_val or \
-                    self.__max_ex_val is not None and x >= self.__max_ex_val:
-                err = True
-            # end if
-
-            # If the defined range is ment to be exclusive, the previously determinded result gets inverted.
-            if self.__excl:
-                err = not err
-            # end if
-
-            if err:
-                raise ValueError
-            # end if
-
-            return x
-        # end def
-    # end class
-
-    class IsBool:
-        def __new__(cls, x) -> bool:
-            try:
-                x = bool(strtobool(x))
-                return x
-            except ValueError:
-                raise ValueError
-            # end try
-        # end def
-    # end class
-
-    @staticmethod
-    def __epilog():
-        return "GUI\n" + \
-               "    Mouse and keyboard events on the plotting window (GUI).\n" \
-               "\n" + \
-               "    There are two operating modes:\n" \
-               "    * SIMULATION [Default]\n" \
-               "    * MANUAL_EDITING\n" \
-               "\n" + \
-               "    To switch between these two modes, one needs to click (at least) three times with the LEFT mouse button while holding the CTRL + SHIFT buttons pressed without interruption. " \
-               "Release the keyboard buttons to complete the mode switch.\n" \
-               "\n" + \
-               "    SIMULATION mode\n" \
-               "        In the SIMULATION mode there are following commands:\n" + \
-               "        * CTRL + RIGHT CLICK: Navigate forwards (load measurement data of the next time step).\n" + \
-               "\n" + \
-               "    MANUAL_EDITING mode\n" \
-               "        In the MANUAL_EDITING mode there are following commands:\n" + \
-               "        * CTRL + LEFT CLICK: Add point to current (time) frame.\n" + \
-               "        * SHIFT + LEFT CLICK: Add frame.\n" + \
-               "        * CTRL + RIGHT CLICK: Remove last set point.\n" + \
-               "        * SHIFT + RIGHT CLICK: Remove last frame.\n" + \
-               "\n" + \
-               "    Any mode\n" \
-               "        In any mode there are following commands:\n" + \
-               "        * CTRL + SHIFT + RIGHT CLICK: Stores the current detections (either created manually or by simulation) to the specified output file. Attention: the plotting window will " \
-               "change its size back to the size where movie writer (which is the one, that creates the video) got instantiated. This is neccessary, since the frame/figure size needs to be " \
-               "constant. However, immediately before saving the video, the window can be resized to the desired size for capturing the next video, since the next movie writer will use this new " \
-               "window size. This way, at the very beginning after starting the program, the window might get resized to the desired size and then a (more or less) empty video might be saved, " \
-               "which starts a new one on the desired size, directly at the beginning of the simulation.\n" \
-               "        * CTRL + ALT + SHIFT + RIGHT CLICK: Stores the plot window frames as video, if its filename got specified.\n" \
-               "        * CTRL + WHEEL UP: Zooms in.\n" \
-               "        * CTRL + WHEEL DOWN: Zooms out.\n" \
-               "        * CTRL + LEFT MOUSE DOWN + MOUSE MOVE: Moves the whole scene with the mouse cursor.\n" \
-               "        * SHIFT + LEFT CLICK: De-/activate automatic stepping."
-    # end def
-
+class GmPhdFilterSimulatorConfig(FilterSimulatorConfig):
     def __init__(self):
         self.__parser = argparse.ArgumentParser(add_help=False, formatter_class=self._ArgumentDefaultsRawDescriptionHelpFormatter, epilog=GmPhdFilterSimulatorConfig.__epilog(),
-                                                description="This a simulator for the GM-PHD filter.")
+                                                description="This is a simulator for the GM-PHD-filter.")
 
         # General group
         group = self.__parser.add_argument_group('General - common program settings')
@@ -899,11 +696,6 @@ class GmPhdFilterSimulatorConfig:
         group.add_argument("--observer_position", dest="observer", metavar=("LAT", "LON"), action=self._PositionAction, type=float, nargs=2, default=None,
                            help="Sets the geodetic position of the observer in WGS84 to OBSERVER_POSITION. Can be used instead of the automatically used center of all detections or in case of only "
                                 "manually creating detections, which needed to be transformed back to WGS84.")
-
-        group.add_argument("--init_kbd_cmds", action=self._EvalListAction, comptype=str,
-                           default=[],
-                           help=f"Specifies a list of keyboard commands that will be executed only once. These commands will be executed only if and when "
-                           f"{str(PhdFilterSimStepPart.USER_INITIAL_KEYBOARD_COMMANDS)} is set with the parameter --sim_loop_step_parts.")
 
         # PHD group
         group = self.__parser.add_argument_group('PHD - parameters for the PHD filter setup')
@@ -972,7 +764,7 @@ class GmPhdFilterSimulatorConfig:
                            help="Sets the max. number of Gm components used for the GMM representing the current PHD.")
 
         group.add_argument("--ext_states_bias", metavar="[>0.0 - N]", type=GmPhdFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
-                           help="Sets the bias for extracting the current states. It works as a factor for the GM component's weights and is used, "
+                           help="Sets the bias for extracting the current states to EXT_STATES_BIAS. It works as a factor for the GM component's weights and is used, "
                                 "in case the weights are too small to reach a value higher than 0.5, which in needed to get extracted as a state.")
 
         group.add_argument("--ext_states_use_integral", type=GmPhdFilterSimulatorConfig.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
@@ -987,7 +779,7 @@ class GmPhdFilterSimulatorConfig:
                            help="Sets the value p for GOSPA, which is used to calculate the p-norm of the sum of the GOSPA error terms (distance, false alarms and missed detections).")
 
         # Data Simulator group
-        group = self.__parser.add_argument_group("Simulator - calculates detections from simulation")
+        group = self.__parser.add_argument_group("Data Simulator - calculates detections from simulation")
 
         group.add_argument("--birth_area", metavar=("X_MIN", "Y_MIN", "X_MAX", "Y_MAX"), action=self._LimitsAction, type=float, nargs=4, default=None,
                            help="Sets the are for newly born targets. It not set, the same limits as defined by --fov will get used.")
@@ -1015,10 +807,18 @@ class GmPhdFilterSimulatorConfig:
                            help="Sets the variance of the velocitiy's initial y-component of a newly born object to SIGMA_VEL_y. Only takes effect if the parameter --birth_dist is set to "
                                 f"{str(BirthDistribution.UNIFORM_AREA)}.")
 
-        group.add_argument("--sim_loop_step_parts", metavar=f"[{{{  ','.join([str(t) for t in PhdFilterSimStepPart]) }}}*]", action=self._EvalListAction, comptype=PhdFilterSimStepPart,
-                           default=[PhdFilterSimStepPart.USER_INITIAL_KEYBOARD_COMMANDS, PhdFilterSimStepPart.USER_PREDICT_AND_UPDATE, PhdFilterSimStepPart.USER_PRUNE,
-                                    PhdFilterSimStepPart.USER_EXTRACT_STATES, PhdFilterSimStepPart.USER_CALC_GOSPA,
-                                    PhdFilterSimStepPart.DRAW, PhdFilterSimStepPart.WAIT_FOR_TRIGGER, PhdFilterSimStepPart.LOAD_NEXT_FRAME],
+        # Simulator group
+        group = self.__parser.add_argument_group("Simulator - Automates the simulation")
+
+        group.add_argument("--init_kbd_cmds", action=self._EvalListAction, comptype=str,
+                           default=[],
+                           help=f"Specifies a list of keyboard commands that will be executed only once. These commands will be executed only if and when "
+                           f"{str(SimStepPart.USER_INITIAL_KEYBOARD_COMMANDS)} is set with the parameter --sim_loop_step_parts.")
+
+        group.add_argument("--sim_loop_step_parts", metavar=f"[{{{  ','.join([str(t) for t in SimStepPart]) }}}*]", action=self._EvalListAction, comptype=SimStepPart,
+                           default=[SimStepPart.USER_INITIAL_KEYBOARD_COMMANDS, SimStepPart.USER_PREDICT_AND_UPDATE, SimStepPart.USER_PRUNE,
+                                    SimStepPart.USER_EXTRACT_STATES, SimStepPart.USER_CALC_GOSPA,
+                                    SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER, SimStepPart.LOAD_NEXT_FRAME],
                            help=f"Sets the loops step parts and their order. This determindes how the main loop in the simulation behaves, when the current state is drawn, the user can interact, "
                            f"etc. Be cautious that some elements need to be present to make the program work (see default value)!")
 
@@ -1092,6 +892,49 @@ class GmPhdFilterSimulatorConfig:
         group.add_argument("--start_window_max", type=GmPhdFilterSimulatorConfig.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
                            help="Specifies, if the plotting window will be maximized at program start. Works only if the parameter --output_video is not set.")
     # end def __init__
+
+    @staticmethod
+    def __epilog():
+        return "GUI\n" + \
+               "    Mouse and keyboard events on the plotting window (GUI).\n" \
+               "\n" + \
+               "    There are two operating modes:\n" \
+               "    * SIMULATION [Default]\n" \
+               "    * MANUAL_EDITING\n" \
+               "\n" + \
+               "    To switch between these two modes, one needs to click (at least) three times with the LEFT mouse button while holding the CTRL + SHIFT buttons pressed without interruption. " \
+               "Release the keyboard buttons to complete the mode switch.\n" \
+               "\n" + \
+               "    SIMULATION mode\n" \
+               "        In the SIMULATION mode there are following commands:\n" + \
+               "        * CTRL + RIGHT CLICK: Navigate forwards (load measurement data of the next time step).\n" + \
+               "\n" + \
+               "    MANUAL_EDITING mode\n" \
+               "        In the MANUAL_EDITING mode there are following commands:\n" + \
+               "        * CTRL + LEFT CLICK: Add point to current (time) frame.\n" + \
+               "        * SHIFT + LEFT CLICK: Add frame.\n" + \
+               "        * CTRL + RIGHT CLICK: Remove last set point.\n" + \
+               "        * SHIFT + RIGHT CLICK: Remove last frame.\n" + \
+               "\n" + \
+               "    Any mode\n" \
+               "        In any mode there are following commands:\n" + \
+               "        * CTRL + SHIFT + RIGHT CLICK: Stores the current detections (either created manually or by simulation) to the specified output file. Attention: the plotting window will " \
+               "change its size back to the size where movie writer (which is the one, that creates the video) got instantiated. This is neccessary, since the frame/figure size needs to be " \
+               "constant. However, immediately before saving the video, the window can be resized to the desired size for capturing the next video, since the next movie writer will use this new " \
+               "window size. This way, at the very beginning after starting the program, the window might get resized to the desired size and then a (more or less) empty video might be saved, " \
+               "which starts a new one on the desired size, directly at the beginning of the simulation.\n" \
+               "        * CTRL + ALT + SHIFT + RIGHT CLICK: Stores the plot window frames as video, if its filename got specified.\n" \
+               "        * CTRL + WHEEL UP: Zooms in.\n" \
+               "        * CTRL + WHEEL DOWN: Zooms out.\n" \
+               "        * CTRL + LEFT MOUSE DOWN + MOUSE MOVE: Moves the whole scene with the mouse cursor.\n" \
+               "        * SHIFT + LEFT CLICK: De-/activate automatic stepping."
+
+    # end def
+
+    @staticmethod
+    def myeval(s: str):
+        return eval(s)
+    # end def
 
     def help(self) -> str:
         return self.__parser.format_help()
