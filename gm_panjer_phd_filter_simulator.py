@@ -1,77 +1,50 @@
 #!/usr/bin/env python3
 
 from __future__ import annotations
-from typing import Sequence, List, Optional, Union
+from typing import List, Optional, Union
 import sys
 import random
 import numpy as np
 from datetime import datetime
-from matplotlib.patches import Ellipse, Rectangle
 import seaborn as sns
-from enum import auto, Enum
+from enum import auto
 
 from filter_simulator.common import Logging, Limits, Position
 from filter_simulator.filter_simulator import SimStepPartConf
 from scenario_data.scenario_data_converter import CoordSysConv, Wgs84ToEnuConverter
 from filter_simulator.dyn_matrix import TransitionModel, PcwConstWhiteAccelModelNd
 from gm_panjer_phd_filter import GmPanjerPhdFilter
-from gm import GmComponent, Gmm, DistMeasure
-from scenario_data.scenario_data_simulator import ScenarioDataSimulator, BirthDistribution
+from gm import GmComponent, DistMeasure
+from scenario_data.scenario_data_simulator import ScenarioDataSimulator
 from filter_simulator.window_helper import LimitsMode
 from scenario_data.scenario_data import ScenarioData
-from base_filter_simulator import BaseFilterSimulatorConfig, BaseFilterSimulator, DrawLayerBase, SimStepPartBase, DensityDrawStyleBase
-from gm_phd_filter_simulator import GmPhdBaseFilterSimulatorConfig
-
-
-class DrawLayer(DrawLayerBase):
-    DENSITY_MAP = auto()
-    FOV = auto()
-    BIRTH_AREA = auto()
-    ALL_TRAJ_LINE = auto()
-    ALL_TRAJ_POS = auto()
-    UNTIL_TRAJ_LINE = auto()
-    UNTIL_TRAJ_POS = auto()
-    ALL_DET = auto()
-    ALL_DET_CONN = auto()
-    UNTIL_MISSED_DET = auto()
-    UNTIL_FALSE_ALARM = auto()
-    CUR_GMM_COV_ELL = auto()
-    CUR_GMM_COV_MEAN = auto()
-    CUR_EST_STATE = auto()
-    UNTIL_EST_STATE = auto()
-    CUR_DET = auto()
-# end class
+from base_filter_simulator import SimStepPartBase, AdditionalAxisBase
+from gm_phd_base_filter_simulator import GmPhdBaseFilterSimulator, GmPhdBaseFilterSimulatorConfig
+from gm_phd_base_filter_simulator import DrawLayer, DensityDrawStyle, DataProviderType
 
 
 class SimStepPart(SimStepPartBase):
-    DRAW = 0  # Draw the current scene
-    WAIT_FOR_TRIGGER = 1  # Wait for user input to continue with the next step
-    LOAD_NEXT_FRAME = 2  # Load the next data (frame)
-    USER_PREDICT = 3
-    USER_UPDATE = 4
-    USER_PRUNE = 5
-    USER_MERGE = 6
-    USER_EXTRACT_STATES = 7
-    USER_CALC_GOSPA = 8
-    USER_INITIAL_KEYBOARD_COMMANDS = 9
+    DRAW = auto()  # Draw the current scene
+    WAIT_FOR_TRIGGER = auto()  # Wait for user input to continue with the next step
+    LOAD_NEXT_FRAME = auto()  # Load the next data (frame)
+    USER_PREDICT = auto()
+    USER_UPDATE = auto()
+    USER_PRUNE = auto()
+    USER_MERGE = auto()
+    USER_EXTRACT_STATES = auto()
+    USER_CALC_GOSPA = auto()
+    USER_INITIAL_KEYBOARD_COMMANDS = auto()
 # end class
 
 
-class DensityDrawStyle(DensityDrawStyleBase):
-    NONE = 0
-    KDE = 1
-    EVAL = 2
-    HEATMAP = 3
+class AdditionalAxis(AdditionalAxisBase):
+    NONE = auto()
+    GOSPA = auto()
+    VARIANCE = auto()
 # end class
 
 
-class DataProviderType(Enum):
-    FILE_READER = 0
-    SIMULATOR = 1
-# end class
-
-
-class GmPanjerPhdFilterSimulator(BaseFilterSimulator):
+class GmPanjerPhdFilterSimulator(GmPhdBaseFilterSimulator):
     def __init__(self, scenario_data: ScenarioData, output_coord_system_conversion: CoordSysConv,
                  fn_out: str, fn_out_video: Optional[str], auto_step_interval: int, auto_step_autostart: bool, fov: Limits, birth_area: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
                  birth_gmm: List[GmComponent], var_birth: float, p_survival: float, p_detection: float,
@@ -83,32 +56,26 @@ class GmPanjerPhdFilterSimulator(BaseFilterSimulator):
                  draw_layers: Optional[List[DrawLayer]], sim_loop_step_parts: List[SimStepPart], show_legend: Optional[Union[int, str]], show_colorbar: bool, start_window_max: bool,
                  init_kbd_cmds: List[str]):
 
-        self.__sim_loop_step_parts: List[SimStepPart] = sim_loop_step_parts  # Needs to be set before calling the contructor of the FilterSimulator, since it already needs this values there
-
-        BaseFilterSimulator.__init__(self, scenario_data, output_coord_system_conversion,
-                                     fn_out, fn_out_video, auto_step_interval, auto_step_autostart, fov, limits_mode, observer, logging,
-                                     gospa_c, gospa_p,
-                                     gui, density_draw_style, n_bins_density_map,
-                                     draw_layers, sim_loop_step_parts, show_legend, show_colorbar, start_window_max,
-                                     init_kbd_cmds)
+        GmPhdBaseFilterSimulator.__init__(self, scenario_data, output_coord_system_conversion,
+                                          fn_out, fn_out_video, auto_step_interval, auto_step_autostart, fov, birth_area, limits_mode, observer, logging,
+                                          trunc_thresh, merge_dist_measure, merge_thresh, max_components,
+                                          ext_states_bias, ext_states_use_integral,
+                                          gospa_c, gospa_p,
+                                          gui, density_draw_style, n_samples_density_map, n_bins_density_map,
+                                          draw_layers, sim_loop_step_parts, show_legend, show_colorbar, start_window_max,
+                                          init_kbd_cmds)
 
         self.f = GmPanjerPhdFilter(birth_gmm=birth_gmm, var_birth=var_birth, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, rho_fa=rho_fa, gate_thresh=gate_thresh, logging=logging)
 
-        self._trunc_thresh: float = trunc_thresh
-        self._merge_dist_measure: DistMeasure = merge_dist_measure
-        self._merge_thresh: float = merge_thresh
-        self._max_components: int = max_components
-        self._ext_states_bias: float = ext_states_bias
-        self._ext_states_use_integral: bool = ext_states_use_integral
-        self._n_samples_density_map: int = n_samples_density_map
-        self._birth_area: Limits = birth_area
+        # --
+        self._variance_values: List[float] = list()
     # end def
 
     def _set_sim_loop_step_part_conf(self):
         # Configure the processing steps
         sim_step_part_conf = SimStepPartConf()
 
-        for step_part in self.__sim_loop_step_parts:
+        for step_part in self._sim_loop_step_parts:
             if step_part is SimStepPart.DRAW:
                 sim_step_part_conf.add_draw_step()
 
@@ -164,6 +131,7 @@ class GmPanjerPhdFilterSimulator(BaseFilterSimulator):
 
             # Predict and update
             self.f.update([np.array([det.x, det.y]) for det in self.f.cur_frame])
+            self._variance_values.append(self.f.variance)
         # end if
     # end def
 
@@ -185,108 +153,6 @@ class GmPanjerPhdFilterSimulator(BaseFilterSimulator):
         # end if
     # end def
 
-    def _sim_loop_extract_states(self):
-        self._last_step_part = "Extract States"
-
-        if self._step >= 0:
-            # Extract states
-            ext_states = self.f.extract_states(bias=self._ext_states_bias, use_integral=self._ext_states_use_integral)
-            self._remove_duplikate_states(ext_states)
-            self._ext_states.append(ext_states)
-        # end if
-    # end def
-
-    def _calc_density(self, x: np.ndarray, y: np.ndarray) -> float:
-        # Code taken from eval_grid_2d()
-        points = np.stack((x, y), axis=-1).reshape(-1, 2)
-
-        vals = self.f.gmm.eval_list(points, which_dims=(0, 1))
-
-        return np.array(vals).reshape(x.shape)
-    # end def
-
-    @staticmethod
-    def _get_cov_ellipse_from_comp(comp: GmComponent, n_std: float, which_dims: Sequence[int] = (0, 1), **kwargs):
-        which_dims = list(which_dims)
-        comp = comp.get_with_reduced_dims(which_dims)
-        return GmPanjerPhdFilterSimulator._get_cov_ellipse(comp.cov, comp.loc, n_std, **kwargs)
-    # end def
-
-    @staticmethod
-    def _get_cov_ellipse(cov, centre, n_std, **kwargs):
-        """ Return a matplotlib Ellipse patch representing the covariance matrix
-        cov centred at centre and scaled by the factor n_std. """
-        # Find and sort eigenvalues and eigenvectors into descending order
-        eig_vals, eig_vecs = np.linalg.eigh(cov)
-        order = eig_vals.argsort()[::-1]
-        eig_vals, eig_vecs = eig_vals[order], eig_vecs[:, order]
-
-        # The counter-clockwise angle to rotate our ellipse by
-        vx, vy = eig_vecs[:, 0][0], eig_vecs[:, 0][1]
-        theta = np.arctan2(vy, vx)
-
-        # Width and height of ellipse to draw
-        width, height = 2 * n_std * np.sqrt(eig_vals)
-        return Ellipse(xy=centre, width=width, height=height, angle=float(np.degrees(theta)), **kwargs)
-    # end def
-
-    def _draw_density_map(self, zorder):
-        # Draw density map
-        if self._density_draw_style == DensityDrawStyle.KDE:
-            if len(self.f.gmm) > 0:
-                samples = self.f.gmm.samples(self._n_samples_density_map)
-                x = [s[0] for s in samples]
-                y = [s[1] for s in samples]
-                self._draw_plot = sns.kdeplot(x, y, shade=True, ax=self._ax, shade_lowest=False, cmap=self._draw_cmap, cbar=(not self._colorbar_is_added), zorder=zorder)  # Colorbar instead of label
-                self._colorbar_is_added = True
-            # end if
-
-        elif self._density_draw_style == DensityDrawStyle.EVAL:
-            x, y, z = self._calc_density_map(self._draw_limits, grid_res=self._n_bins_density_map)
-            self._draw_plot = self._ax.contourf(x, y, z, 100, cmap=self._draw_cmap, zorder=zorder)  # Colorbar instead of label
-
-        elif self._density_draw_style == DensityDrawStyle.HEATMAP:
-            samples = self.f.gmm.samples(self._n_samples_density_map)
-            det_limits = self._det_limits
-            plot = self._ax.hist2d([s[0] for s in samples], [s[1] for s in samples], bins=self._n_bins_density_map,
-                                   range=[[det_limits.x_min, det_limits.x_max], [det_limits.y_min, det_limits.y_max]], density=False, cmap=self._draw_cmap, zorder=zorder)  # Colorbar instead of label
-            # It may make no sense to change the limits, since the sampling happens anyway until infinity in each direction of the
-            # state space and therefore the bins will be quite empty when zooming in, which results in a poor visualization
-            # plot = self._ax.hist2d([s[0] for s in samples], [s[1] for s in samples], bins=self.__n_bins_density_map,
-            #                        range=[[limits.x_min, limits.x_max], [limits.y_min, limits.y_max]], density=False, cmap=cmap, zorder=zorder)  # Colorbar instead of label
-            self._draw_plot = plot[3]  # Get the image itself
-
-        else:  # DensityDrawStyle.NONE:
-            pass
-        # end if
-    # end def
-
-    def _draw_birth_area(self, zorder):
-        # The rectangle defining the birth area of the simulator
-        width = self._birth_area.x_max - self._birth_area.x_min
-        height = self._birth_area.y_max - self._birth_area.y_min
-        ell = Rectangle(xy=(self._birth_area.x_min, self._birth_area.y_min), width=width, height=height, fill=False, edgecolor="black",
-                        linestyle=":", linewidth=0.5, zorder=zorder, label="birth area")
-        self._ax.add_patch(ell)
-    # end def
-
-    def _draw_cur_gmm_cov_ell(self, zorder):
-        if self.f.cur_frame is not None:
-            # GM-PHD components covariance ellipses
-            for comp in self.f.gmm:
-                ell = self._get_cov_ellipse_from_comp(comp, 1., facecolor='none', edgecolor="black", linewidth=.5, zorder=zorder, label="gmm cov. ell.")
-                self._ax.add_patch(ell)
-            # end for
-        # end if
-    # end def
-
-    def _draw_cur_gmm_cov_mean(self, zorder):
-        if self.f.cur_frame is not None:
-            # GM-PHD components means
-            self._ax.scatter([comp.loc[0] for comp in self.f.gmm], [comp.loc[1] for comp in self.f.gmm], s=5, edgecolor="blue", marker="o", zorder=zorder, label="gmm comp. mean")
-        # end if
-    # end def
-
     def get_fig_suptitle(self) -> str:
         return "GM-Panjer-PHD Filter Simulator"
 
@@ -294,7 +160,7 @@ class GmPanjerPhdFilterSimulator(BaseFilterSimulator):
 
     def get_ax_title(self) -> str:
         return f"Sim-Step: {self._step if self._step >= 0 else '-'}, Sim-SubStep: {self._last_step_part}, # Est. States: " \
-            f"{len(self._ext_states[-1]) if len(self._ext_states) > 0 else '-'}, # GMM-Components: {len(self.f.gmm)}, # GOSPA: " \
+            f"{len(self._ext_states[-1]) if len(self._ext_states) > 0 else '-'}, # GMM-Components: {len(self.f.gmm)}, # Variance: {self.f.variance:.2f}, # GOSPA: " \
             f"{self._gospa_values[-1] if len(self._gospa_values) > 0 else '-':.04}"
     # end def
 
@@ -302,59 +168,37 @@ class GmPanjerPhdFilterSimulator(BaseFilterSimulator):
         return "Panjer PHD intensity"
     # end def
 
-    def get_draw_routine_by_layer(self, layer: DrawLayerBase):
-        if layer == DrawLayer.DENSITY_MAP:
-            return self._draw_density_map
-
-        elif layer == DrawLayer.FOV:
-            return self._draw_fov
-
-        elif layer == DrawLayer.BIRTH_AREA:
-            return self._draw_birth_area
-
-        elif layer == DrawLayer.ALL_TRAJ_LINE:
-            return self._draw_all_traj_line
-
-        elif layer == DrawLayer.ALL_TRAJ_POS:
-            return self._draw_all_traj_pos
-
-        elif layer == DrawLayer.UNTIL_TRAJ_LINE:
-            return self._draw_until_traj_line
-
-        elif layer == DrawLayer.UNTIL_TRAJ_POS:
-            return self._draw_until_traj_pos
-
-        elif layer == DrawLayer.ALL_DET:
-            return self._draw_all_det
-
-        elif layer == DrawLayer.ALL_DET_CONN:
-            return self._draw_all_det_conn
-
-        elif layer == DrawLayer.UNTIL_MISSED_DET:
-            return self._draw_until_missed_det
-
-        elif layer == DrawLayer.UNTIL_FALSE_ALARM:
-            return self._draw_until_false_alarm
-
-        elif layer == DrawLayer.CUR_GMM_COV_ELL:
-            return self._draw_cur_gmm_cov_ell
-
-        elif layer == DrawLayer.CUR_GMM_COV_MEAN:
-            return self._draw_cur_gmm_cov_mean
-
-        elif layer == DrawLayer.CUR_EST_STATE:
-            return self._draw_cur_est_state
-
-        elif layer == DrawLayer.UNTIL_EST_STATE:
-            return self._draw_until_est_state
-
-        elif layer == DrawLayer.CUR_DET:
-            return self._draw_cur_det
-        # end if
+    @staticmethod
+    def get_additional_axis_enum() -> AdditionalAxisBase:
+        return AdditionalAxis
     # end def
 
-    def get_draw_layer_enum(self) -> DrawLayerBase:
-        return DrawLayer
+    @staticmethod
+    def get_additional_axis_by_short_name(short_name: str) -> Optional[AdditionalAxisBase]:
+        if short_name == "g":
+            return AdditionalAxis.GOSPA
+
+        elif short_name == "v":
+            return AdditionalAxis.VARIANCE
+        # end if
+
+        return None
+    # end def
+
+    def do_additional_axis_plot(self, axis: AdditionalAxisBase) -> bool:
+        if axis is AdditionalAxis.VARIANCE:
+            self._ax_add.clear()
+            self._ax_add.plot(self._variance_values)
+
+            self._ax_add.set_title(f"Variance in # of targets", fontsize=8)
+            self._ax_add.set_xlabel("Simulation step", fontsize=8)
+            self._ax_add.set_ylabel("Variance", fontsize=8)
+
+            return True
+
+        else:
+            return False
+        # end if
     # end def
 
     @staticmethod

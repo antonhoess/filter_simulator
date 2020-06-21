@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Tuple, Optional, Union, Callable
+from typing import List, Tuple, Optional, Union
 from abc import abstractmethod
 import numpy as np
 import matplotlib.gridspec
@@ -39,9 +39,8 @@ class DataProviderTypeBase(Enum):
 # end class
 
 
-class AdditionalAxis(Enum):
-    AX_NONE = 0
-    AX_GOSPA = 1
+class AdditionalAxisBase(Enum):
+    pass
 # end class
 
 
@@ -207,6 +206,8 @@ class BaseFilterSimulatorConfig:
 
             if isinstance(x, self.comptype):
                 setattr(namespace, self.dest, x)
+            else:
+                raise TypeError(f"'{str(x)}' is not of type '{self.comptype}', but of '{type(x)}'.")
             # end if
         # end def
 
@@ -214,7 +215,6 @@ class BaseFilterSimulatorConfig:
             res = None
 
             try:
-                # res = BaseFilterSimulatorConfig._doeval(expr)  # XXX
                 if self.user_eval:
                     res = self.user_eval(expr)
                 else:
@@ -384,7 +384,7 @@ class BaseFilterSimulator(FilterSimulator):
         self.__sim_loop_step_parts: List[SimStepPartBase] = sim_loop_step_parts  # Needs to be set before calling the contructor of the FilterSimulator, since it already needs this values there
 
         FilterSimulator.__init__(self, scenario_data, output_coord_system_conversion, fn_out, fn_out_video, auto_step_interval, auto_step_autostart,
-                                 fov, limits_mode, observer, start_window_max, gui, logging)
+                                 fov, limits_mode, observer, show_colorbar, start_window_max, gui, logging)
 
         self.f = None
 
@@ -396,7 +396,6 @@ class BaseFilterSimulator(FilterSimulator):
         self._logging: Logging = logging
         self._draw_layers: Optional[List[DrawLayerBase]] = draw_layers
         self._show_legend: Optional[Union[int, str]] = show_legend
-        self._show_colorbar: bool = show_colorbar
         self._fov: Limits = fov
         self._init_kbd_cmds = init_kbd_cmds
         # --
@@ -407,10 +406,16 @@ class BaseFilterSimulator(FilterSimulator):
         self._last_step_part: str = "Initialized"
         self._initial_keyboard_commands_executed = False
         self._ax_add = None
-        self._ax_add_type = AdditionalAxis.AX_NONE
+        self._ax_add_enum = self.get_additional_axis_enum()
+        self._ax_add_type = self._ax_add_enum.NONE
         self._draw_limits = None
         self._draw_cmap = "Blues"
         self._draw_plot = None
+    # end def
+
+    @property
+    def _sim_loop_step_parts(self):
+        return self.__sim_loop_step_parts
     # end def
 
     def _sim_loop_calc_gospa(self):
@@ -642,7 +647,7 @@ class BaseFilterSimulator(FilterSimulator):
 
         # Colorbar
         if self._show_colorbar and not self._colorbar_is_added and self._draw_plot:
-            cb = self._fig.colorbar(self._draw_plot, ax=self._ax)
+            cb = self._fig.colorbar(self._draw_plot, ax=self._ax, cax=self._cax)
             cb.set_label(self.get_density_label())
             self._colorbar_is_added = True
         # end if
@@ -665,14 +670,16 @@ class BaseFilterSimulator(FilterSimulator):
 
         # Additional subplot
         if self._ax_add is not None:
-            if self._ax_add_type is AdditionalAxis.AX_GOSPA:
+            if self._ax_add_type is self._ax_add_enum.GOSPA:
                 self._ax_add.clear()
                 self._ax_add.plot(self._gospa_values)
 
                 self._ax_add.set_title(f"GOSPA", fontsize=8)
                 self._ax_add.set_xlabel("Simulation step", fontsize=8)
                 self._ax_add.set_ylabel("GOSPA", fontsize=8)
-                self._ax_add.grid()
+
+            else:  # Handle all cases not known in this class
+                self.do_additional_axis_plot(self._ax_add_type)
             # end if
         # end if
     # end def
@@ -685,7 +692,24 @@ class BaseFilterSimulator(FilterSimulator):
 
     @staticmethod
     @abstractmethod
-    def get_help() -> str:  # Need to be abstract to enforce the evaluation in the place, where the subclass is known, since in this place it's unknown
+    def get_additional_axis_enum() -> AdditionalAxisBase:
+        pass
+    # end def
+
+    @staticmethod
+    @abstractmethod
+    def get_additional_axis_by_short_name(short_name: str) -> Optional[AdditionalAxisBase]:
+        pass
+    # end def
+
+    @abstractmethod
+    def do_additional_axis_plot(self, axis: AdditionalAxisBase) -> bool:
+        pass
+    # end def
+
+    @staticmethod
+    @abstractmethod
+    def get_help() -> str:  # Need to be abstract to enforce the evaluation in the place, where the subclass is known, since in this place here it's unknown
         pass
     # end def
 
@@ -750,18 +774,22 @@ class BaseFilterSimulator(FilterSimulator):
 
         elif len(fields) > 0 and fields[0] == "p":  # plot
             if len(fields) > 1:
-                if fields[1] == "g":  # Plot GOSPA history
-                    self._toggle_additional_axis(AdditionalAxis.AX_GOSPA)
+                axis = self.get_additional_axis_by_short_name(fields[1])
+
+                if axis is not None:
+                    self._toggle_additional_axis(axis)
+                else:
+                    print(f"No additional axis matching '{fields[1]}' found.")
                 # end if
             else:
                 if self._ax_add is None:
-                    # We can only can know what plot to show, if any plot was active before
-                    if self._ax_add_type is not AdditionalAxis.AX_NONE:
+                    # We can only know what plot to show, if any plot was active before
+                    if self._ax_add_type is not self._ax_add_enum.NONE:
                         self._toggle_additional_axis(self._ax_add_type)
                     else:
                         print("Additional plot window not set before - so cannot toggle it (back) on.")
                 else:
-                    self._toggle_additional_axis(AdditionalAxis.AX_NONE)
+                    self._toggle_additional_axis(self._ax_add_enum.NONE)
                 # end if
             # end if
         else:
@@ -769,7 +797,7 @@ class BaseFilterSimulator(FilterSimulator):
         # end if
     # end def
 
-    def _toggle_additional_axis(self, axis_type: AdditionalAxis):
+    def _toggle_additional_axis(self, axis_type: AdditionalAxisBase):
         # Cases
         # -----
         # off -> off
@@ -783,12 +811,12 @@ class BaseFilterSimulator(FilterSimulator):
         # If we set the same layer as is currently active -> Switch off. Only apply when the window is shown.
         # To check this, we cannot use self._ax_add_type to check this, since it stays on its old value for easier toggling.
         if self._ax_add is not None and axis_type is self._ax_add_type:
-            axis_type_effective = AdditionalAxis.AX_NONE
+            axis_type_effective = self._ax_add_enum.NONE
         else:
             axis_type_effective = axis_type
         # end if
 
-        new_is_none = axis_type_effective is AdditionalAxis.AX_NONE
+        new_is_none = axis_type_effective is self._ax_add_enum.NONE
         old_is_none = self._ax_add is None  # To check this, we cannot use self._ax_add_type to check this, since it stays on its old value for easier toggling.
 
         # If we switched: off -> on or on -> off
@@ -801,10 +829,10 @@ class BaseFilterSimulator(FilterSimulator):
             n = 3
             gs = matplotlib.gridspec.GridSpec(n, 1, hspace=1)
 
-            if axis_type_effective is not AdditionalAxis.AX_NONE:  # Show additional plot window
+            if axis_type_effective is not self._ax_add_enum.NONE:  # Show additional plot window
                 # Reduce size of main plot
                 self._ax.set_position(gs[0:n-1].get_position(self._fig))
-                self._ax.set_subplotspec(gs[0:n-1])  # only necessary if using tight_layout()
+                self._ax.set_subplotspec(gs[0:n-1])  # Only necessary if using tight_layout()
 
                 # Add additional plot
                 self._ax_add = self._fig.add_subplot(gs[n-1])
@@ -826,7 +854,7 @@ class BaseFilterSimulator(FilterSimulator):
         # end if
 
         # Only store the current plotting information, if it is not None, since we need it for later.
-        if axis_type is not AdditionalAxis.AX_NONE:
+        if axis_type is not self._ax_add_enum.NONE:
             self._ax_add_type = axis_type
         # end if
     # end def

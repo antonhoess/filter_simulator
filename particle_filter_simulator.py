@@ -17,7 +17,7 @@ from filter_simulator.window_helper import LimitsMode
 from scenario_data.scenario_data_converter import CoordSysConv, Wgs84ToEnuConverter
 from particle_filter import ParticleFilter
 from scenario_data.scenario_data import ScenarioData
-from base_filter_simulator import BaseFilterSimulatorConfig, BaseFilterSimulator, DrawLayerBase, SimStepPartBase, DensityDrawStyleBase
+from base_filter_simulator import BaseFilterSimulatorConfig, BaseFilterSimulator, DrawLayerBase, SimStepPartBase, DensityDrawStyleBase, AdditionalAxisBase
 
 
 class DrawLayer(DrawLayerBase):
@@ -40,22 +40,28 @@ class DrawLayer(DrawLayerBase):
 
 
 class SimStepPart(SimStepPartBase):
-    DRAW = 0  # Draw the current scene
-    WAIT_FOR_TRIGGER = 1  # Wait for user input to continue with the next step
-    LOAD_NEXT_FRAME = 2  # Load the next data (frame)
-    USER_PREDICT = 3
-    USER_UPDATE = 4
-    USER_RESAMPLE = 5
-    USER_EXTRACT_STATES = 6
-    USER_CALC_GOSPA = 7
-    USER_INITIAL_KEYBOARD_COMMANDS = 8
+    DRAW = auto()  # Draw the current scene
+    WAIT_FOR_TRIGGER = auto()  # Wait for user input to continue with the next step
+    LOAD_NEXT_FRAME = auto()  # Load the next data (frame)
+    USER_PREDICT = auto()
+    USER_UPDATE = auto()
+    USER_RESAMPLE = auto()
+    USER_EXTRACT_STATES = auto()
+    USER_CALC_GOSPA = auto()
+    USER_INITIAL_KEYBOARD_COMMANDS = auto()
 # end class
 
 
 class DensityDrawStyle(DensityDrawStyleBase):
-    NONE = 0
-    KDE = 1
-    EVAL = 2
+    NONE = auto()
+    KDE = auto()
+    EVAL = auto()
+# end class
+
+
+class AdditionalAxis(AdditionalAxisBase):
+    NONE = auto()
+    GOSPA = auto()
 # end class
 
 
@@ -176,7 +182,7 @@ class ParticleFilterSimulator(BaseFilterSimulator):
             if len(self.f.particles) > 0:
                 x = [p.x for p in self.f.particles]
                 y = [p.y for p in self.f.particles]
-                self._draw_plot = sns.kdeplot(x, y, shade=True, ax=self._ax, shade_lowest=False, cmap=self._draw_cmap, cbar=(not self._colorbar_is_added), zorder=zorder)  # Colorbar instead of label
+                self._draw_plot = sns.kdeplot(x, y, shade=True, ax=self._ax, shade_lowest=False, cmap=self._draw_cmap, cbar=(self._show_colorbar and not self._colorbar_is_added), cbar_ax=self._cax, zorder=zorder)  # Colorbar instead of label
                 self._colorbar_is_added = True
             # end if
 
@@ -275,6 +281,25 @@ class ParticleFilterSimulator(BaseFilterSimulator):
     # end def
 
     @staticmethod
+    def get_additional_axis_enum() -> AdditionalAxisBase:
+        return AdditionalAxis
+    # end def
+
+    @staticmethod
+    def get_additional_axis_by_short_name(short_name: str) -> Optional[AdditionalAxisBase]:
+        if short_name == "g":
+            return AdditionalAxis.GOSPA
+        # end if
+
+        return None
+    # end def
+
+    def do_additional_axis_plot(self, axis: AdditionalAxisBase) -> bool:
+        # No additional axes
+        return False
+    # end def
+
+    @staticmethod
     def get_help() -> str:
         return ParticleFilterSimulatorConfig().help()
     # end def
@@ -321,12 +346,12 @@ class ParticleFilterSimulatorConfig(BaseFilterSimulatorConfig):
         # Visualization group
         group = self._parser_groups["visualization"]
 
-        group.add_argument("--density_draw_style", action=self._EvalAction, comptype=DensityDrawStyle, user_eval=self._user_eval, choices=[str(t) for t in DensityDrawStyle],
+        group.add_argument("--density_draw_style", action=self._EvalAction, comptype=DensityDrawStyleBase, user_eval=self._user_eval, choices=[str(t) for t in DensityDrawStyle],
                            default=DensityDrawStyle.NONE,
                            help=f"Sets the drawing style to visualizing the density/intensity map. Possible values are: {str(DensityDrawStyle.KDE)} (kernel density estimator) and "
                                 f"{str(DensityDrawStyle.EVAL)} (evaluate the correct value for each cell in a grid).")
 
-        group.add_argument("--draw_layers", metavar=f"[{{{  ','.join([str(t) for t in DrawLayer]) }}}*]", action=self._EvalListAction, comptype=DrawLayer, user_eval=self._user_eval,
+        group.add_argument("--draw_layers", metavar=f"[{{{  ','.join([str(t) for t in DrawLayer]) }}}*]", action=self._EvalListAction, comptype=DrawLayerBase, user_eval=self._user_eval,
                            default=[ly for ly in DrawLayer if ly not in [DrawLayer.ALL_TRAJ_LINE, DrawLayer.ALL_TRAJ_POS, DrawLayer.ALL_DET, DrawLayer.ALL_DET_CONN]],
                            help=f"Sets the list of drawing layers. Allows to draw only the required layers and in the desired order. If not set, a fixes set of layers are drawn in a fixed order. "
                            f"Example 1: [{str(DrawLayer.DENSITY_MAP)}, {str(DrawLayer.PARTICLES)}]\n"

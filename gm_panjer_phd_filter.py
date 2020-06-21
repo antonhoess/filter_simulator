@@ -38,6 +38,11 @@ class GmPanjerPhdFilter:
         return self._gmm
     # end def
 
+    @property
+    def variance(self) -> float:
+        return self._variance
+    # end def
+
     @gmm.setter
     def gmm(self, value: Gmm) -> None:
         self._gmm = value

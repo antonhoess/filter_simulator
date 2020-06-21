@@ -9,7 +9,8 @@ import matplotlib.axes
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import matplotlib.backend_bases
-from enum import Enum
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from enum import Enum, auto
 import datetime
 import copy
 
@@ -22,10 +23,10 @@ from .io_helper import FileHelper
 
 
 class SimStepPart(Enum):
-    DRAW = 0  # Draw the current scene
-    WAIT_FOR_TRIGGER = 1  # Wait for user input to continue with the next step
-    LOAD_NEXT_FRAME = 2  # Load the next data (frame)
-    USER = 3  # Call user defined function
+    DRAW = auto()  # Draw the current scene
+    WAIT_FOR_TRIGGER = auto()  # Wait for user input to continue with the next step
+    LOAD_NEXT_FRAME = auto()  # Load the next data (frame)
+    USER = auto()  # Call user defined function
 # end class
 
 
@@ -85,7 +86,7 @@ class DragStart:
 
 class FilterSimulator(ABC):
     def __init__(self, scenario_data: ScenarioData, output_coord_system_conversion: CoordSysConv, fn_out: str, fn_out_video: Optional[str], auto_step_interval: int,
-                 auto_step_autostart: bool, fov: Limits, limits_mode: LimitsMode, observer: Optional[Position], start_window_max: bool, gui: bool, logging: Logging) -> None:
+                 auto_step_autostart: bool, fov: Limits, limits_mode: LimitsMode, observer: Optional[Position], show_colorbar: bool, start_window_max: bool, gui: bool, logging: Logging) -> None:
         self._scenario_data = scenario_data
         self.__output_coord_system_conversion: CoordSysConv = output_coord_system_conversion
         self.__fn_out: str = fn_out
@@ -97,11 +98,13 @@ class FilterSimulator(ABC):
         self.__auto_step_interval: int = auto_step_interval
         self.__auto_step: bool = auto_step_autostart  # Only sets the initial value, which can be changed later on
         self.__ax: Optional[matplotlib.axes.Axes] = None
+        self.__cax: Optional[matplotlib.axes.Axes] = None
         self.__fig: Optional[matplotlib.pyplot.figure] = None
         self.__gui = gui
         self._logging: Logging = logging
         self.__observer: Position = observer if observer is not None else Position(0, 0)
         self.__observer_is_set = (observer is not None)
+        self._show_colorbar: bool = show_colorbar
         self.__start_window_max: bool = start_window_max
         self.__window_mode_checker: WindowModeChecker = WindowModeChecker(default_window_mode=WindowMode.SIMULATION, logging=logging)
         self.__manual_frames: FrameList = FrameList()
@@ -166,6 +169,10 @@ class FilterSimulator(ABC):
         return self.__ax
 
     @property
+    def _cax(self) -> Optional[matplotlib.axes.Axes]:
+        return self.__cax
+
+    @property
     def _fig(self) -> Optional[matplotlib.pyplot.figure]:
         return self.__fig
 
@@ -209,6 +216,13 @@ class FilterSimulator(ABC):
             self.__fig: plt.Figure = plt.figure()
             self.__fig.canvas.set_window_title("State Space")
             self.__ax = self.__fig.add_subplot(1, 1, 1)
+
+            if self._show_colorbar:
+                divider = make_axes_locatable(self._ax)
+                self.__cax = divider.append_axes("right", size="5%", pad=0.05)
+            else:
+                self.__cax = None
+            # end if
 
             # self.cid = fig.canvas.mpl_connect('button_press_event', self._cb_button_press_event)
             self.__fig.canvas.mpl_connect("button_press_event", self.__cb_button_press_event)
