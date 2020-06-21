@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Tuple, Optional, Union
+from typing import List, Tuple, Optional, Union, Callable
 from abc import abstractmethod
 import numpy as np
 import matplotlib.gridspec
@@ -60,10 +60,10 @@ class BaseFilterSimulatorConfig:
         group.add_argument("--fov", metavar=("X_MIN", "Y_MIN", "X_MAX", "Y_MAX"), action=self._LimitsAction, type=float, nargs=4, default=Limits(-10, -10, 10, 10),
                            help="Sets the Field of View (FoV) of the scene.")
 
-        group.add_argument("--limits_mode", action=self._EvalAction, comptype=LimitsMode, choices=[str(t) for t in LimitsMode], default=LimitsMode.FOV_INIT_ONLY,
+        group.add_argument("--limits_mode", action=self._EvalAction, comptype=LimitsMode, user_eval=self._user_eval, choices=[str(t) for t in LimitsMode], default=LimitsMode.FOV_INIT_ONLY,
                            help="Sets the limits mode, which defines how the limits for the plotting window are set initially and while updating the plot.")
 
-        group.add_argument("--verbosity", action=self._EvalAction, comptype=Logging, choices=[str(t) for t in Logging], default=Logging.INFO,
+        group.add_argument("--verbosity", action=self._EvalAction, comptype=Logging, user_eval=self._user_eval, choices=[str(t) for t in Logging], default=Logging.INFO,
                            help="Sets the programs verbosity level to VERBOSITY. If set to Logging.NONE, the program will be silent.")
 
         group.add_argument("--observer_position", dest="observer", metavar=("LAT", "LON"), action=self._PositionAction, type=float, nargs=2, default=None,
@@ -86,13 +86,12 @@ class BaseFilterSimulatorConfig:
         group = self._parser.add_argument_group("Simulator - Automates the simulation")
         self._parser_groups["simulator"] = group
 
-        group.add_argument("--init_kbd_cmds", action=self._EvalListAction, comptype=str,
-                           default=[],
+        group.add_argument("--init_kbd_cmds", action=self._EvalListAction, comptype=str, user_eval=self._user_eval, default=[],
                            help=f"Specifies a list of keyboard commands that will be executed only once. These commands will be executed only if and when "
                            f"{str(self.get_sim_step_part().USER_INITIAL_KEYBOARD_COMMANDS)} is set with the parameter --sim_loop_step_parts.")
 
         group.add_argument("--sim_loop_step_parts", metavar=f"[{{{  ','.join([str(t) for t in self.get_sim_step_part()]) }}}*]", action=self._EvalListAction, comptype=self.get_sim_step_part(),
-                           default=self.get_sim_loop_step_parts_default(),
+                           user_eval=self._user_eval, default=self.get_sim_loop_step_parts_default(),
                            help=f"Sets the loops step parts and their order. This determindes how the main loop in the simulation behaves, when the current state is drawn, the user can interact, "
                            f"etc. Be cautious that some elements need to be present to make the program work (see default value)!")
 
@@ -125,7 +124,7 @@ class BaseFilterSimulatorConfig:
                            help="Indicates if the first empty file name will be used when determining a output filename (see parameters --output and --output_seq_max) or if the next number "
                                 "(to create the filename) will be N+1 with N is the highest number in the range and format given by the parameter --output_seq_max.")
 
-        group.add_argument("--output_coord_system_conversion", metavar="OUTPUT_COORD_SYSTEM", action=self._EvalAction, comptype=CoordSysConv,
+        group.add_argument("--output_coord_system_conversion", metavar="OUTPUT_COORD_SYSTEM", action=self._EvalAction, comptype=CoordSysConv, user_eval=self._user_eval,
                            choices=[str(t) for t in CoordSysConv], default=CoordSysConv.ENU,
                            help="Defines the coordinates-conversion of the internal system (ENU) to the OUTPUT_COORD_SYSTEM for storing the values.")
 
@@ -170,7 +169,7 @@ class BaseFilterSimulatorConfig:
 
     @staticmethod
     @abstractmethod
-    def _doeval(s: str):  # This needs to be overridden, since eval() needs the indidivual globals and locals, which are not available here.
+    def _user_eval(s: str):  # This needs to be overridden, since eval() needs the indidivual globals and locals, which are not available here.
         pass
     # end def
 
@@ -197,9 +196,10 @@ class BaseFilterSimulatorConfig:
     # end class
 
     class _EvalAction(argparse.Action):
-        def __init__(self, option_strings, dest, nargs=None, const=None, default=None, type=None, choices=None, required=False, help=None, metavar=None, comptype=None):
+        def __init__(self, option_strings, dest, nargs=None, const=None, default=None, type=None, choices=None, required=False, help=None, metavar=None, comptype=None, user_eval=None):
             argparse.Action.__init__(self, option_strings, dest, nargs, const, default, type, choices, required, help, metavar)
             self.comptype = comptype
+            self.user_eval = user_eval
         # end def
 
         def __call__(self, parser, namespace, values, option_string=None, comptype=None):
@@ -210,12 +210,16 @@ class BaseFilterSimulatorConfig:
             # end if
         # end def
 
-        @staticmethod
-        def silent_eval(expr: str):
+        def silent_eval(self, expr: str):
             res = None
 
             try:
-                res = BaseFilterSimulatorConfig._doeval(expr)
+                # res = BaseFilterSimulatorConfig._doeval(expr)  # XXX
+                if self.user_eval:
+                    res = self.user_eval(expr)
+                else:
+                    res = eval(expr)
+                # end if
             except SyntaxError:
                 pass
             except AttributeError:
@@ -227,7 +231,7 @@ class BaseFilterSimulatorConfig:
     # end class
 
     class _EvalListAction(_EvalAction):
-        def __call__(self, parser, namespace, values, option_string=None, comptype=None):
+        def __call__(self, parser, namespace, values, option_string=None, comptype=None, user_eval=None):
             x = self.silent_eval(values)
 
             if isinstance(x, list) and all(isinstance(item, self.comptype) for item in x):
@@ -237,8 +241,8 @@ class BaseFilterSimulatorConfig:
     # end class
 
     class _EvalListToTypeAction(_EvalAction):
-        def __init__(self, option_strings, dest, nargs=None, const=None, default=None, type=None, choices=None, required=False, help=None, metavar=None, comptype=None, restype=None):
-            BaseFilterSimulatorConfig._EvalAction.__init__(self, option_strings, dest, nargs, const, default, type, choices, required, help, metavar, comptype)
+        def __init__(self, option_strings, dest, nargs=None, const=None, default=None, type=None, choices=None, required=False, help=None, metavar=None, comptype=None, restype=None, user_eval=None):
+            BaseFilterSimulatorConfig._EvalAction.__init__(self, option_strings, dest, nargs, const, default, type, choices, required, help, metavar, comptype, user_eval)
             self.restype = restype
         # end def
 

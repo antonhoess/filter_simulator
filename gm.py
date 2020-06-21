@@ -141,8 +141,10 @@ class Gmm:
         for comp in self:
             res_gmm.add_comp(comp)
 
-        for comp in gmm:
-            res_gmm.add_comp(comp)
+        if gmm != 0:  # Happens e.g. on sum() of a list with no elements
+            for comp in gmm:
+                res_gmm.add_comp(comp)
+        # end if
 
         return res_gmm
 

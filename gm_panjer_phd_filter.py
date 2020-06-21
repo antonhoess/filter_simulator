@@ -13,7 +13,7 @@ from filter_simulator.common import Logging, Frame
 from gm import GmComponent, Gmm, DistMeasure
 
 
-class GmPanjerFilter:
+class GmPanjerPhdFilter:
     def __init__(self, birth_gmm: List[GmComponent], var_birth: float, survival: float, detection: float, f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray,
                  rho_fa: float, gate_thresh: Optional[float], logging: Logging = Logging.INFO):
         self._gmm: Gmm = Gmm()                   # Empty - things will need to be born before we observe them
@@ -325,17 +325,17 @@ class GmPanjerFilter:
                 y0 = 1
                 y1 = mean_val
                 y2 = mean_val ** 2
-                y1z = []
-                y2z = []
-                y2zz = []
+                y1z = np.empty(0)
+                y2z = np.empty(0)
+                y2zz = np.empty(0)
 
             else:
                 y0 = 1
                 y1 = alpha_val / (beta_val + self._detection)
                 y2 = alpha_val * (alpha_val + 1) / (beta_val + self._detection) ** 2
-                y1z = []
-                y2z = []
-                y2zz = []
+                y1z = np.empty(0)
+                y2z = np.empty(0)
+                y2zz = np.empty(0)
             # end if
 
         elif n_meas == 1:
@@ -343,16 +343,16 @@ class GmPanjerFilter:
                 y0 = 1 + mean_val * mu_z[0]
                 y1 = mean_val + mean_val ** 2 * mu_z[0]
                 y2 = mean_val ** 2 + mean_val ** 3 * mu_z[0]
-                y1z = mean_val
-                y2z = mean_val ** 2
+                y1z = np.asarray([mean_val])
+                y2z = np.asarray([mean_val ** 2])
                 y2zz = 0
 
             else:
                 y0 = 1 + alpha_val / (beta_val + self._detection) * mu_z[0]
                 y1 = alpha_val / (beta_val + self._detection) + alpha_val * (alpha_val + 1) / (beta_val + self._detection) ** 2 * mu_z[0]
                 y2 = alpha_val * (alpha_val + 1) / (beta_val + self._detection) ** 2 + alpha_val * (alpha_val + 1) * (alpha_val + 2) / (beta_val + self._detection) ** 3 * mu_z[0]
-                y1z = alpha_val / (beta_val + self._detection)
-                y2z = alpha_val * (alpha_val + 1) / (beta_val + self._detection) ** 2
+                y1z = np.asarray([alpha_val / (beta_val + self._detection)])
+                y2z = np.asarray([alpha_val * (alpha_val + 1) / (beta_val + self._detection) ** 2])
                 y2zz = 0
             # end if
 
@@ -551,9 +551,9 @@ def main():
     z.append([14.840025078811097, 22.065461144797656])
     z.append([9.386061433062581, 7.915493385632560])
 
-    f = GmPanjerFilter(birth_gmm=[birth_comp],
-                       var_birth=1., survival=.99, detection=.9, f=f, q=q, h=h, r=r,
-                       rho_fa=0.0012, gate_thresh=9.2103, logging=Logging.INFO)
+    f = GmPanjerPhdFilter(birth_gmm=[birth_comp],
+                          var_birth=1., survival=.99, detection=.9, f=f, q=q, h=h, r=r,
+                          rho_fa=0.0012, gate_thresh=9.2103, logging=Logging.INFO)
 
     for i in range(50):
         f.predict()

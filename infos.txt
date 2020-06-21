@@ -6,6 +6,13 @@ gm_phd_filter_simulator.py --data_provider="DataProviderType.SIMULATOR" --input_
 
 Create documentation
 --------------------
+# First make sure, the neccessary tools are installed and accessible in the environment.
+* strip-hints
+* conda / activate
+* epydoc
+* graphviz
+
+
 # Strip type hints, since the used tool cannot handle it
 find . -type f -name '*.py' -print0 | xargs --null -I{} bash -c 'strip-hints --no-ast {} > $(dirname {})/__xxx__$(basename {}); mv $(dirname {})/__xxx__$(basename {}) $(dirname {})/$(basename {})' \;
 

@@ -9,6 +9,7 @@ from datetime import datetime
 from matplotlib.patches import Ellipse, Rectangle
 import seaborn as sns
 from enum import auto, Enum
+from abc import ABC, abstractmethod
 
 from filter_simulator.common import Logging, Limits, Position
 from filter_simulator.filter_simulator import SimStepPartConf
@@ -265,7 +266,6 @@ class GmPhdFilterSimulator(BaseFilterSimulator):
 
     def get_fig_suptitle(self) -> str:
         return "GM-PHD Filter Simulator"
-
     # end def
 
     def get_ax_title(self) -> str:
@@ -340,29 +340,27 @@ class GmPhdFilterSimulator(BaseFilterSimulator):
 # end class GmPhdFilterSimulator
 
 
-class GmPhdFilterSimulatorConfig(BaseFilterSimulatorConfig):
+class GmPhdBaseFilterSimulatorConfig(ABC, BaseFilterSimulatorConfig):
     def __init__(self):
         BaseFilterSimulatorConfig.__init__(self)
 
-        self._parser.description = "This is a simulator for the GM-PHD-filter."
-        self._parser.epilog = GmPhdFilterSimulatorConfig.__epilog()
+        self._parser.epilog = GmPhdBaseFilterSimulatorConfig.__epilog()
 
         # General group
         group = self._parser_groups["general"]
 
-        group.add_argument("--data_provider", action=self._EvalAction, comptype=DataProviderType, choices=[str(t) for t in DataProviderType], default=DataProviderType.FILE_READER,
+        group.add_argument("--data_provider", action=self._EvalAction, comptype=DataProviderType, user_eval=self._user_eval, choices=[str(t) for t in DataProviderType], default=DataProviderType.FILE_READER,
                            help="Sets the data provider type that defines the data source. DataProviderType.FILE_READER reads lines from file defined in --input, "
-                                "DataProviderType.SIMULATOR simulates the PHD behaviour defined by the parameters given in section SIMULATOR).")
+                                "DataProviderType.SIMULATOR simulates the target behaviour defined by the parameters given in section SIMULATOR).")
 
         # PHD group - derived from filter group
         group = self._parser_groups["filter"]
-        group.title = "PHD Filter - parameters for the PHD filter setup"
 
-        group.add_argument("--birth_gmm", action=self._EvalListToTypeAction, comptype=GmComponent, restype=Gmm, default=Gmm([GmComponent(0.1, [0, 0], np.eye(2) * 10. ** 2)]),
+        group.add_argument("--birth_gmm", action=self._EvalListToTypeAction, comptype=GmComponent, user_eval=self._user_eval, restype=Gmm, default=Gmm([GmComponent(0.1, [0, 0], np.eye(2) * 10. ** 2)]),
                            help="List ([]) of GmComponent which defines the birth-GMM. Format for a single GmComponent: GmComponent(weight, mean, covariance_matrix).")
 
         group.add_argument("--p_survival", metavar="[>0.0 - 1.0]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0, max_val=1.), default=.9,
-                           help="Sets the survival probability for the PHD from time step k to k+1.")
+                           help="Sets the survival probability for the GM components from time step k to k+1.")
 
         group.add_argument("--n_birth", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
                            help="Sets the mean number of newly born objects in each step to N_BIRTH.")
@@ -373,23 +371,23 @@ class GmPhdFilterSimulatorConfig(BaseFilterSimulatorConfig):
         group.add_argument("--p_detection", metavar="[>0.0 - 1.0]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0, max_val=1.), default=.9,
                            help="Sets the (sensor's) detection probability for the measurements.")
 
-        group.add_argument("--transition_model", action=self._EvalAction, comptype=TransitionModel, choices=[str(t) for t in TransitionModel], default=TransitionModel.INDIVIDUAL,
+        group.add_argument("--transition_model", action=self._EvalAction, comptype=TransitionModel, user_eval=self._user_eval, choices=[str(t) for t in TransitionModel], default=TransitionModel.INDIVIDUAL,
                            help=f"Sets the transition model. If set to {str(TransitionModel.INDIVIDUAL)}, the matrices F (see paraemter --mat_f) and Q (see paraemter --mat_q) need to be specified. "
                                 f"{str(TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND)} stands for Piecewise Constant Acceleration Model.")
 
         group.add_argument("--delta_t", metavar="[>0.0 - N]", dest="dt", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
                            help="Sets the time betwen two measurements to DELTA_T. Does not work with the --transition_model parameter set to TransitionModel.INDIVIDUAL.")
 
-        group.add_argument("--mat_f", dest="f", action=self._EvalAction, comptype=np.ndarray, default=np.eye(2),
-                           help="Sets the transition model matrix for the PHD.")
+        group.add_argument("--mat_f", dest="f", action=self._EvalAction, comptype=np.ndarray, user_eval=self._user_eval, default=np.eye(2),
+                           help="Sets the transition model matrix.")
 
-        group.add_argument("--mat_q", dest="q", action=self._EvalAction, comptype=np.ndarray, default=np.eye(2) * 0.,
+        group.add_argument("--mat_q", dest="q", action=self._EvalAction, comptype=np.ndarray, user_eval=self._user_eval, default=np.eye(2) * 0.,
                            help="Sets the process noise covariance matrix.")
 
-        group.add_argument("--mat_h", dest="h", action=self._EvalAction, comptype=np.ndarray, default=np.eye(2),
+        group.add_argument("--mat_h", dest="h", action=self._EvalAction, comptype=np.ndarray, user_eval=self._user_eval, default=np.eye(2),
                            help="Sets the measurement model matrix.")
 
-        group.add_argument("--mat_r", dest="r", action=self._EvalAction, comptype=np.ndarray, default=np.eye(2) * .1,
+        group.add_argument("--mat_r", dest="r", action=self._EvalAction, comptype=np.ndarray, user_eval=self._user_eval, default=np.eye(2) * .1,
                            help="Sets the measurement noise covariance matrix.")
 
         group.add_argument("--sigma_accel_x", type=float, default=.1,
@@ -398,7 +396,7 @@ class GmPhdFilterSimulatorConfig(BaseFilterSimulatorConfig):
 
         group.add_argument("--sigma_accel_y", type=float, default=.1,
                            help="Sets the variance of the acceleration's y-component to calculate the process noise covariance_matrix Q. Only evaluated when using the "
-                                "{str(TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND)} (see parameter --transition_model) and in this case ignores the value specified for Q (see parameter --mat_q).")
+                                f"{str(TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND)} (see parameter --transition_model) and in this case ignores the value specified for Q (see parameter --mat_q).")
 
         group.add_argument("--gate_thresh", metavar="[0.0 - 1.0]", type=BaseFilterSimulatorConfig.InRange(float, min_val=0, max_val=1.), default=None,
                            help="Sets the confidence threshold for chi^2 gating on new measurements to GATE_THRESH.")
@@ -410,7 +408,7 @@ class GmPhdFilterSimulatorConfig(BaseFilterSimulatorConfig):
         group.add_argument("--trunc_thresh", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1e-6,
                            help="Sets the truncation threshold for the prunging step. GM components with weights lower than this value get directly removed.")
 
-        group.add_argument("--merge_dist_measure", action=self._EvalAction, comptype=DistMeasure, choices=[str(t) for t in DistMeasure],
+        group.add_argument("--merge_dist_measure", action=self._EvalAction, comptype=DistMeasure, user_eval=self._user_eval, choices=[str(t) for t in DistMeasure],
                            default=DistMeasure.MAHALANOBIS_MOD,
                            help="Defines the measurement for calculating the distance between two GMM components.")
 
@@ -419,7 +417,7 @@ class GmPhdFilterSimulatorConfig(BaseFilterSimulatorConfig):
                                 "parameter --merge_dist_measure and depending in this parameter the threashold needs to be set differently.")
 
         group.add_argument("--max_components", metavar="[1 - N]", type=BaseFilterSimulatorConfig.InRange(int, min_val=1), default=100,
-                           help="Sets the max. number of Gm components used for the GMM representing the current PHD.")
+                           help="Sets the max. number of GM components used for the GMM representing the current intensity.")
 
         group.add_argument("--ext_states_bias", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
                            help="Sets the bias for extracting the current states to EXT_STATES_BIAS. It works as a factor for the GM component's weights and is used, "
@@ -443,7 +441,7 @@ class GmPhdFilterSimulatorConfig(BaseFilterSimulatorConfig):
         group.add_argument("--var_fa", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0),  default=1.,
                            help="Sets the variance of false alarms in the FoV to VAR_FA.")
 
-        group.add_argument("--birth_dist", action=self._EvalAction, comptype=BirthDistribution, choices=[str(t) for t in BirthDistribution], default=BirthDistribution.UNIFORM_AREA,
+        group.add_argument("--birth_dist", action=self._EvalAction, comptype=BirthDistribution, user_eval=self._user_eval, choices=[str(t) for t in BirthDistribution], default=BirthDistribution.UNIFORM_AREA,
                            help="Sets the type of probability distribution for new born objects. In case BirthDistribution.UNIFORM_AREA is set, the newly born objects are distributed uniformly "
                                 "over the area defined by the parameter --birth_area (or the FoV if not set) and the initial velocity will be set to the values defineed by the perameters "
                                 f"--sigma_vel_x and --sigma_vel_y. If {str(BirthDistribution.GMM_FILTER)} is set, the same GMM will get used for the creating of new objects, as the filter uses for "
@@ -469,13 +467,14 @@ class GmPhdFilterSimulatorConfig(BaseFilterSimulatorConfig):
         # Visualization group
         group = self._parser_groups["visualization"]
 
-        group.add_argument("--density_draw_style", action=self._EvalAction, comptype=DensityDrawStyle, choices=[str(t) for t in DensityDrawStyle],
+        group.add_argument("--density_draw_style", action=self._EvalAction, comptype=DensityDrawStyle, user_eval=self._user_eval, choices=[str(t) for t in DensityDrawStyle],
                            default=DensityDrawStyle.NONE,
                            help=f"Sets the drawing style to visualizing the density/intensity map. Possible values are: {str(DensityDrawStyle.KDE)} (kernel density estimator), "
-                                f"{str(DensityDrawStyle.EVAL)} (evaluate the correct value for each cell in a grid) and {str(DensityDrawStyle.HEATMAP)} (heatmap made of sampled points from the PHD).")
+                                f"{str(DensityDrawStyle.EVAL)} (evaluate the correct value for each cell in a grid) and {str(DensityDrawStyle.HEATMAP)} (heatmap made of sampled points from "
+                           f"the intensity distribution).")
 
         group.add_argument("--n_samples_density_map", metavar="[100 - N]", type=BaseFilterSimulatorConfig.InRange(int, min_val=1000),  default=1000,
-                           help="Sets the number samples to draw from the PHD for drawing the density map. A good number might be 10000.")
+                           help="Sets the number samples to draw from the intensity distribution for drawing the density map. A good number might be 10000.")
 
         group.add_argument("--draw_layers", metavar=f"[{{{  ','.join([str(t) for t in DrawLayer]) }}}*]", action=self._EvalListAction, comptype=DrawLayer,
                            default=[ly for ly in DrawLayer if ly not in[DrawLayer.ALL_TRAJ_LINE, DrawLayer.ALL_TRAJ_POS, DrawLayer.ALL_DET, DrawLayer.ALL_DET_CONN,
@@ -520,8 +519,38 @@ class GmPhdFilterSimulatorConfig(BaseFilterSimulatorConfig):
                "        * CTRL + WHEEL DOWN: Zooms out.\n" \
                "        * CTRL + LEFT MOUSE DOWN + MOUSE MOVE: Moves the whole scene with the mouse cursor.\n" \
                "        * SHIFT + LEFT CLICK: De-/activate automatic stepping."
-
     # end def
+# end class
+
+
+class GmPhdFilterSimulatorConfig(GmPhdBaseFilterSimulatorConfig):
+    def __init__(self):
+        GmPhdBaseFilterSimulatorConfig.__init__(self)
+
+        self._parser.description = "This is a simulator for the GM-PHD filter."
+
+        # General group
+        # -> Nothing to add
+
+        # PHD group - derived from filter group
+        group = self._parser_groups["filter"]
+        group.title = "PHD Filter - parameters for the PHD filter setup"
+
+        # Data Simulator group
+        # -> Nothing to add
+
+        # Simulator group
+        # -> Nothing to add, but helper functions implemented
+
+        # File Reader group
+        # -> Nothing to add
+
+        # File Storage group
+        # -> Nothing to add
+
+        # Visualization group
+        # -> Nothing to add
+    # end def __init__
 
     @staticmethod
     def get_sim_step_part():
@@ -536,7 +565,7 @@ class GmPhdFilterSimulatorConfig(BaseFilterSimulatorConfig):
     # end def
 
     @staticmethod
-    def _doeval(s: str):
+    def _user_eval(s: str):
         return eval(s)
     # end def
 # end class
@@ -600,17 +629,17 @@ def main(argv: List[str]):
                                               birth_gmm=args.birth_gmm).run()
     # end if
 
-    sim: GmPhdFilterSimulator = GmPhdFilterSimulator(scenario_data=scenario_data, output_coord_system_conversion=args.output_coord_system_conversion, fn_out=args.output,
-                                                     fn_out_video=args.output_video,
-                                                     auto_step_interval=args.auto_step_interval, auto_step_autostart=args.auto_step_autostart, fov=args.fov, birth_area=args.birth_area,
-                                                     limits_mode=args.limits_mode, observer=args.observer, logging=args.verbosity,
-                                                     birth_gmm=args.birth_gmm, p_survival=args.p_survival, p_detection=args.p_detection,
-                                                     f=args.f, q=args.q, h=args.h, r=args.r, rho_fa=args.rho_fa, gate_thresh=args.gate_thresh,
-                                                     trunc_thresh=args.trunc_thresh, merge_dist_measure=args.merge_dist_measure, merge_thresh=args.merge_thresh, max_components=args.max_components,
-                                                     ext_states_bias=args.ext_states_bias, ext_states_use_integral=args.ext_states_use_integral, gospa_c=args.gospa_c, gospa_p=args.gospa_p,
-                                                     gui=args.gui, density_draw_style=args.density_draw_style, n_samples_density_map=args.n_samples_density_map, n_bins_density_map=args.n_bins_density_map,
-                                                     draw_layers=args.draw_layers, sim_loop_step_parts=args.sim_loop_step_parts, show_legend=args.show_legend, show_colorbar=args.show_colorbar,
-                                                     start_window_max=args.start_window_max, init_kbd_cmds=args.init_kbd_cmds)
+    sim = GmPhdFilterSimulator(scenario_data=scenario_data, output_coord_system_conversion=args.output_coord_system_conversion, fn_out=args.output,
+                               fn_out_video=args.output_video,
+                               auto_step_interval=args.auto_step_interval, auto_step_autostart=args.auto_step_autostart, fov=args.fov, birth_area=args.birth_area,
+                               limits_mode=args.limits_mode, observer=args.observer, logging=args.verbosity,
+                               birth_gmm=args.birth_gmm, p_survival=args.p_survival, p_detection=args.p_detection,
+                               f=args.f, q=args.q, h=args.h, r=args.r, rho_fa=args.rho_fa, gate_thresh=args.gate_thresh,
+                               trunc_thresh=args.trunc_thresh, merge_dist_measure=args.merge_dist_measure, merge_thresh=args.merge_thresh, max_components=args.max_components,
+                               ext_states_bias=args.ext_states_bias, ext_states_use_integral=args.ext_states_use_integral, gospa_c=args.gospa_c, gospa_p=args.gospa_p,
+                               gui=args.gui, density_draw_style=args.density_draw_style, n_samples_density_map=args.n_samples_density_map, n_bins_density_map=args.n_bins_density_map,
+                               draw_layers=args.draw_layers, sim_loop_step_parts=args.sim_loop_step_parts, show_legend=args.show_legend, show_colorbar=args.show_colorbar,
+                               start_window_max=args.start_window_max, init_kbd_cmds=args.init_kbd_cmds)
 
     sim.fn_out_seq_max = args.output_seq_max
     sim.fn_out_fill_gaps = args.output_fill_gaps
@@ -621,3 +650,4 @@ def main(argv: List[str]):
 
 if __name__ == "__main__":
     main(sys.argv)
+# end if

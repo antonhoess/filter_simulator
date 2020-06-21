@@ -321,12 +321,12 @@ class ParticleFilterSimulatorConfig(BaseFilterSimulatorConfig):
         # Visualization group
         group = self._parser_groups["visualization"]
 
-        group.add_argument("--density_draw_style", action=self._EvalAction, comptype=DensityDrawStyle, choices=[str(t) for t in DensityDrawStyle],
+        group.add_argument("--density_draw_style", action=self._EvalAction, comptype=DensityDrawStyle, user_eval=self._user_eval, choices=[str(t) for t in DensityDrawStyle],
                            default=DensityDrawStyle.NONE,
                            help=f"Sets the drawing style to visualizing the density/intensity map. Possible values are: {str(DensityDrawStyle.KDE)} (kernel density estimator) and "
                                 f"{str(DensityDrawStyle.EVAL)} (evaluate the correct value for each cell in a grid).")
 
-        group.add_argument("--draw_layers", metavar=f"[{{{  ','.join([str(t) for t in DrawLayer]) }}}*]", action=self._EvalListAction, comptype=DrawLayer,
+        group.add_argument("--draw_layers", metavar=f"[{{{  ','.join([str(t) for t in DrawLayer]) }}}*]", action=self._EvalListAction, comptype=DrawLayer, user_eval=self._user_eval,
                            default=[ly for ly in DrawLayer if ly not in [DrawLayer.ALL_TRAJ_LINE, DrawLayer.ALL_TRAJ_POS, DrawLayer.ALL_DET, DrawLayer.ALL_DET_CONN]],
                            help=f"Sets the list of drawing layers. Allows to draw only the required layers and in the desired order. If not set, a fixes set of layers are drawn in a fixed order. "
                            f"Example 1: [{str(DrawLayer.DENSITY_MAP)}, {str(DrawLayer.PARTICLES)}]\n"
@@ -346,7 +346,7 @@ class ParticleFilterSimulatorConfig(BaseFilterSimulatorConfig):
     # end def
 
     @staticmethod
-    def _doeval(s: str):
+    def _user_eval(s: str):
         return eval(s)
     # end def
 # end class
@@ -376,17 +376,17 @@ def main(argv: List[str]):
         scenario_data = Wgs84ToEnuConverter.convert(scenario_data, args.observer)
     # end if
 
-    sim: ParticleFilterSimulator = ParticleFilterSimulator(scenario_data=scenario_data, output_coord_system_conversion=args.output_coord_system_conversion, fn_out=args.output,
-                                                           fn_out_video=args.output_video,
-                                                           auto_step_interval=args.auto_step_interval, auto_step_autostart=args.auto_step_autostart, fov=args.fov,
-                                                           limits_mode=args.limits_mode, observer=args.observer, logging=args.verbosity,
-                                                           ext_states_ms_bandwidth=args.ext_states_ms_bandwidth, gospa_c=args.gospa_c, gospa_p=args.gospa_p,
-                                                           n_particles=args.n_particles, sigma_gauss_kernel=args.sigma_gauss_kernel, particle_movement_noise=args.particle_movement_noise,
-                                                           speed=args.speed,
-                                                           gui=args.gui, density_draw_style=args.density_draw_style,
-                                                           n_bins_density_map=args.n_bins_density_map,
-                                                           draw_layers=args.draw_layers, sim_loop_step_parts=args.sim_loop_step_parts, show_legend=args.show_legend, show_colorbar=args.show_colorbar,
-                                                           start_window_max=args.start_window_max, init_kbd_cmds=args.init_kbd_cmds)
+    sim = ParticleFilterSimulator(scenario_data=scenario_data, output_coord_system_conversion=args.output_coord_system_conversion, fn_out=args.output,
+                                  fn_out_video=args.output_video,
+                                  auto_step_interval=args.auto_step_interval, auto_step_autostart=args.auto_step_autostart, fov=args.fov,
+                                  limits_mode=args.limits_mode, observer=args.observer, logging=args.verbosity,
+                                  ext_states_ms_bandwidth=args.ext_states_ms_bandwidth, gospa_c=args.gospa_c, gospa_p=args.gospa_p,
+                                  n_particles=args.n_particles, sigma_gauss_kernel=args.sigma_gauss_kernel, particle_movement_noise=args.particle_movement_noise,
+                                  speed=args.speed,
+                                  gui=args.gui, density_draw_style=args.density_draw_style,
+                                  n_bins_density_map=args.n_bins_density_map,
+                                  draw_layers=args.draw_layers, sim_loop_step_parts=args.sim_loop_step_parts, show_legend=args.show_legend, show_colorbar=args.show_colorbar,
+                                  start_window_max=args.start_window_max, init_kbd_cmds=args.init_kbd_cmds)
 
     sim.fn_out_seq_max = args.output_seq_max
     sim.fn_out_fill_gaps = args.output_fill_gaps
@@ -397,3 +397,4 @@ def main(argv: List[str]):
 
 if __name__ == "__main__":
     main(sys.argv)
+# end if
