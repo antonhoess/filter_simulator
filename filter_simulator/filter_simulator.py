@@ -13,13 +13,14 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from enum import Enum, auto
 import datetime
 import copy
+import argparse
 
 from filter_simulator.common import Logging, SimulationDirection, Limits, Position, FrameList
 from filter_simulator.window_helper import WindowMode, LimitsMode, WindowModeChecker
-from scenario_data.scenario_data_converter import CoordSysConv
+from scenario_data.scenario_data_converter import CoordSysConv, EnuToWgs84Converter
 from scenario_data.scenario_data import ScenarioData
-from scenario_data.scenario_data_converter import EnuToWgs84Converter
 from .io_helper import FileHelper
+from config import Config, ConfigSettings
 
 
 class SimStepPart(Enum):
@@ -85,40 +86,39 @@ class DragStart:
 
 
 class FilterSimulator(ABC):
-    def __init__(self, scenario_data: ScenarioData, output_coord_system_conversion: CoordSysConv, fn_out: str, fn_out_video: Optional[str], auto_step_interval: int,
-                 auto_step_autostart: bool, fov: Limits, limits_mode: LimitsMode, observer: Optional[Position], show_colorbar: bool, start_window_max: bool, gui: bool, logging: Logging) -> None:
-        self._scenario_data = scenario_data
-        self.__output_coord_system_conversion: CoordSysConv = output_coord_system_conversion
-        self.__fn_out: str = fn_out
-        self.__fn_out_video: str = fn_out_video
+    def __init__(self, settings: FilterSimulatorConfigSettings) -> None:
+        self._scenario_data = settings.scenario_data
+        self.__output_coord_system_conversion: CoordSysConv = settings.output_coord_system_conversion
+        self.__fn_out: str = settings.output
+        self.__fn_out_video: str = settings.output_video
         self.__frames: FrameList = FrameList()
         self.__simulation_direction: SimulationDirection = SimulationDirection.FORWARD
         self.__step: int = -1
         self.__next_part_step: bool = False
-        self.__auto_step_interval: int = auto_step_interval
-        self.__auto_step: bool = auto_step_autostart  # Only sets the initial value, which can be changed later on
+        self.__auto_step_interval: int = settings.auto_step_interval
+        self.__auto_step: bool = settings.auto_step_autostart  # Only sets the initial value, which can be changed later on
         self.__ax: Optional[matplotlib.axes.Axes] = None
         self.__cax: Optional[matplotlib.axes.Axes] = None
         self.__fig: Optional[matplotlib.pyplot.figure] = None
-        self.__gui = gui
-        self._logging: Logging = logging
-        self.__observer: Position = observer if observer is not None else Position(0, 0)
-        self.__observer_is_set = (observer is not None)
-        self._show_colorbar: bool = show_colorbar
-        self.__start_window_max: bool = start_window_max
-        self.__window_mode_checker: WindowModeChecker = WindowModeChecker(default_window_mode=WindowMode.SIMULATION, logging=logging)
+        self.__gui = settings.gui
+        self._logging: Logging = settings.verbosity
+        self.__observer: Position = settings.observer_position if settings.observer_position is not None else Position(0, 0)
+        self.__observer_is_set = (settings.observer_position is not None)
+        self._show_colorbar: bool = settings.show_colorbar
+        self.__start_window_max: bool = settings.start_window_max
+        self.__window_mode_checker: WindowModeChecker = WindowModeChecker(default_window_mode=WindowMode.SIMULATION, logging=settings.verbosity)
         self.__manual_frames: FrameList = FrameList()
         self.__refresh: threading.Event = threading.Event()
         self.__refresh_finished: threading.Event = threading.Event()
-        self._fov: Limits = fov
-        self.__det_limits: Limits = copy.deepcopy(fov)
-        self.__limits_mode: LimitsMode = limits_mode
+        self._fov: Limits = settings.fov
+        self.__det_limits: Limits = copy.deepcopy(settings.fov)
+        self.__limits_mode: LimitsMode = settings.limits_mode
         self.__limits_mode_inited: bool = False
         self.__prev_lim: Limits = Limits(0, 0, 0, 0)
 
         self.__sim_step_part_conf = self._set_sim_loop_step_part_conf()
-        self.__fn_out_seq_max: int = 9999
-        self.__fn_out_fill_gaps = False
+        self.__fn_out_seq_max: int = settings.output_seq_max
+        self.__fn_out_fill_gaps = settings.output_fill_gaps
 
         self.__anim = None
         self.__movie_writer = None
@@ -139,14 +139,6 @@ class FilterSimulator(ABC):
     @fn_out_seq_max.setter
     def fn_out_seq_max(self, value: int) -> None:
         self.__fn_out_seq_max = value
-
-    @property
-    def fn_out_fill_gaps(self) -> bool:
-        return self.__fn_out_fill_gaps
-
-    @fn_out_fill_gaps.setter
-    def fn_out_fill_gaps(self, value: bool) -> None:
-        self.__fn_out_fill_gaps = value
 
     @property
     def _step(self) -> int:
@@ -717,3 +709,151 @@ class FilterSimulator(ABC):
         # end if
     # end def
 # end class
+
+
+class FilterSimulatorConfig(Config):
+    def __init__(self):
+        Config.__init__(self)
+
+        # General group
+        group = self._parser.add_argument_group("General - common program settings")
+        self._parser_groups["general"] = group
+
+        group.add_argument("-h", "--help", action="help", default=argparse.SUPPRESS,
+                           help="Shows this help and exits the program.")
+
+        group.add_argument("--fov", metavar=("X_MIN", "Y_MIN", "X_MAX", "Y_MAX"), action=self._LimitsAction, type=float, nargs=4, default=Limits(-10, -10, 10, 10),
+                           help="Sets the Field of View (FoV) of the scene.")
+
+        group.add_argument("--limits_mode", action=self._EvalAction, comptype=LimitsMode, user_eval=self._user_eval, choices=[str(t) for t in LimitsMode], default=LimitsMode.FOV_INIT_ONLY,
+                           help="Sets the limits mode, which defines how the limits for the plotting window are set initially and while updating the plot.")
+
+        group.add_argument("--verbosity", action=self._EvalAction, comptype=Logging, user_eval=self._user_eval, choices=[str(t) for t in Logging], default=Logging.INFO,
+                           help="Sets the programs verbosity level to VERBOSITY. If set to Logging.NONE, the program will be silent.")
+
+        group.add_argument("--observer_position", metavar=("LAT", "LON"), action=self._PositionAction, type=float, nargs=2, default=None,
+                           help="Sets the geodetic position of the observer in WGS84 to OBSERVER_POSITION. Can be used instead of the automatically used center of all detections or in case of only "
+                                "manually creating detections, which needed to be transformed back to WGS84.")
+
+        # Filter group - subclasses will rename it
+        group = self._parser.add_argument_group()
+        self._parser_groups["filter"] = group
+
+        group.add_argument("--gospa_c", metavar="[>0.0 - N]", type=self.InRange(float, min_ex_val=.0), default=1.,
+                           help="Sets the value c for GOSPA, which calculates an assignment metric between tracks and measurements. "
+                                "It serves two purposes: first, it is a distance measure where in case the distance between the two compared points is greater than c, it is classified as outlier "
+                                "and second it is incorporated inthe punishing value.")
+
+        group.add_argument("--gospa_p", metavar="[>0 - N]", type=self.InRange(int, min_ex_val=0), default=1,
+                           help="Sets the value p for GOSPA, which is used to calculate the p-norm of the sum of the GOSPA error terms (distance, false alarms and missed detections).")
+
+        # Simulator group
+        group = self._parser.add_argument_group("Simulator - Automates the simulation")
+        self._parser_groups["simulator"] = group
+
+        group.add_argument("--auto_step_interval", metavar="[0 - N]", type=self.InRange(int, min_val=0), default=0,
+                           help="Sets the time interval [ms] for automatic stepping of the filter.")
+
+        group.add_argument("--auto_step_autostart", type=self.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
+                           help="Indicates if the automatic stepping mode will start (if properly set) at the beginning of the simulation. "
+                                "If this value is not set the automatic mode is not active, but the manual stepping mode instead.")
+
+        # File Reader group
+        group = self._parser.add_argument_group("File Reader - reads detections from file")
+        self._parser_groups["file_reader"] = group
+
+        group.add_argument("--input", default="No file.", help="Parse detections with coordinates from INPUT_FILE.")
+
+        # File Storage group
+        group = self._parser.add_argument_group("File Storage - stores data liks detections and videos to file")
+        self._parser_groups["file_storage"] = group
+
+        group.add_argument("--output", default=None,
+                           help="Sets the output file to store the (manually set or simulated) data as detections' coordinates to OUTPUT_FILE. The parts of the filename equals ?? gets replaced "
+                                "by the continuous number defined by the parameter output_seq_max. Default: Not storing any data.")
+
+        group.add_argument("--output_seq_max", type=int, default=9999,
+                           help="Sets the max. number to append at the end of the output filename (see parameter --output). This allows for automatically continuously named files and prevents "
+                                "overwriting previously stored results. The format will be x_0000, depending on the filename and the number of digits of OUTPUT_SEQ_MAX.")
+
+        group.add_argument("--output_fill_gaps", type=self.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
+                           help="Indicates if the first empty file name will be used when determining a output filename (see parameters --output and --output_seq_max) or if the next number "
+                                "(to create the filename) will be N+1 with N is the highest number in the range and format given by the parameter --output_seq_max.")
+
+        group.add_argument("--output_coord_system_conversion", metavar="OUTPUT_COORD_SYSTEM", action=self._EvalAction, comptype=CoordSysConv, user_eval=self._user_eval,
+                           choices=[str(t) for t in CoordSysConv], default=CoordSysConv.ENU,
+                           help="Defines the coordinates-conversion of the internal system (ENU) to the OUTPUT_COORD_SYSTEM for storing the values.")
+
+        group.add_argument("--output_video", default=None,
+                           help="Sets the output filename to store the video captures from the single frames of the plotting window. The parts of the filename equals ?? gets replaced by the "
+                                "continuous number defined by the parameter output_seq_max. Default: Not storing any video.")
+
+        # Visualization group
+        group = self._parser.add_argument_group("Visualization - options for visualizing the simulated and filtered results")
+        self._parser_groups["visualization"] = group
+
+        group.add_argument("--gui", type=self.IsBool, nargs="?", default=True, const=False, choices=[True, False, 1, 0],
+                           help="Specifies, if the GUI should be shown und be user or just run the program. Note: if the GUI is not active, there's no interaction with possible "
+                                "and therefore anythin need to be done by command line parameters (esp. see --auto_step_autostart) or keyboard commands.")
+
+        group.add_argument("--show_legend", action=self._IntOrWhiteSpaceStringAction, nargs="+", default="lower right",
+                           help="If set, the legend will be shown. SHOW_LEGEND itself specifies the legend's location. The location can be specified with a number of the corresponding string from "
+                                "the following possibilities: 0 = 'best', 1 = 'upper right', 2 = 'upper left', 3 = 'lower left', 4 = 'lower right', 5 = 'right', 6 = 'center left', "
+                                "7 = 'center right', 8 = 'lower center', 9 = 'upper center', 10 = 'center'. Default: 4.")
+
+        group.add_argument("--show_colorbar", type=self.IsBool, nargs="?", default=True, const=False, choices=[True, False, 1, 0],
+                           help="Specifies, if the colorbar should be shown.")
+
+        group.add_argument("--start_window_max", type=self.IsBool, nargs="?", default=False, const=True, choices=[True, False, 1, 0],
+                           help="Specifies, if the plotting window will be maximized at program start. Works only if the parameter --output_video is not set.")
+    # end def
+
+    @staticmethod
+    @abstractmethod
+    def get_sim_step_part():
+        pass
+    # end def
+
+    @staticmethod
+    @abstractmethod
+    def get_sim_loop_step_parts_default() -> List[SimStepPartBase]:
+        pass
+    # end def
+# end class
+
+
+class FilterSimulatorConfigSettings(ConfigSettings):
+    def __init__(self):
+        super().__init__()
+
+        # General group
+        self._add_attribute("scenario_data", ScenarioData)
+        self._add_attribute("fov", Limits)
+        self._add_attribute("limits_mode", LimitsMode)
+        self._add_attribute("verbosity", Logging)
+        self._add_attribute("observer_position", Position, nullable=True)
+
+        # Filter group - subclasses will rename it
+
+        # Simulator group
+        self._add_attribute("auto_step_interval", int)
+        self._add_attribute("auto_step_autostart", bool)
+
+        # File Reader group
+
+        # File Storage group
+        self._add_attribute("output", str, nullable=True)
+        self._add_attribute("output_seq_max", int)
+        self._add_attribute("output_fill_gaps", bool)
+        self._add_attribute("output_coord_system_conversion", CoordSysConv)
+        self._add_attribute("output_video", str, nullable=True)
+
+        # Visualization group
+        self._add_attribute("gui", bool)
+        self._add_attribute("show_legend", [str, bool])
+        self._add_attribute("show_colorbar", bool)
+        self._add_attribute("start_window_max", bool)
+    # end def
+# end def
+
+

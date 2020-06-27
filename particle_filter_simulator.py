@@ -17,7 +17,7 @@ from filter_simulator.window_helper import LimitsMode
 from scenario_data.scenario_data_converter import CoordSysConv, Wgs84ToEnuConverter
 from particle_filter import ParticleFilter
 from scenario_data.scenario_data import ScenarioData
-from base_filter_simulator import BaseFilterSimulatorConfig, BaseFilterSimulator, DrawLayerBase, SimStepPartBase, DensityDrawStyleBase, AdditionalAxisBase
+from base_filter_simulator import BaseFilterSimulatorConfig, BaseFilterSimulatorConfigSettings, BaseFilterSimulator, DrawLayerBase, SimStepPartBase, DensityDrawStyleBase, AdditionalAxisBase
 
 
 class DrawLayer(DrawLayerBase):
@@ -66,25 +66,14 @@ class AdditionalAxis(AdditionalAxisBase):
 
 
 class ParticleFilterSimulator(BaseFilterSimulator):
-    def __init__(self, scenario_data: ScenarioData, output_coord_system_conversion: CoordSysConv,
-                 fn_out: str, fn_out_video: Optional[str], auto_step_interval: int, auto_step_autostart: bool, fov: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
-                 ext_states_ms_bandwidth: float, gospa_c: float, gospa_p: int, n_particles: int, sigma_gauss_kernel: float, particle_movement_noise: float, speed: float,
-                 gui: bool, density_draw_style: DensityDrawStyle, n_bins_density_map: int,
-                 draw_layers: Optional[List[DrawLayer]], sim_loop_step_parts: List[SimStepPart], show_legend: Optional[Union[int, str]], show_colorbar: bool, start_window_max: bool,
-                 init_kbd_cmds: List[str]):
+    def __init__(self, settings) -> None:
+        self.__sim_loop_step_parts: List[SimStepPart] = settings.sim_loop_step_parts  # Needs to be set before calling the contructor of the FilterSimulator, since it already needs this values there
 
-        self.__sim_loop_step_parts: List[SimStepPart] = sim_loop_step_parts  # Needs to be set before calling the contructor of the FilterSimulator, since it already needs this values there
+        BaseFilterSimulator.__init__(self, settings)
 
-        BaseFilterSimulator.__init__(self, scenario_data, output_coord_system_conversion,
-                                     fn_out, fn_out_video, auto_step_interval, auto_step_autostart, fov, limits_mode, observer, logging,
-                                     gospa_c, gospa_p,
-                                     gui, density_draw_style, n_bins_density_map,
-                                     draw_layers, sim_loop_step_parts, show_legend, show_colorbar, start_window_max,
-                                     init_kbd_cmds)
+        self.f = ParticleFilter(settings.n_particles, settings.sigma_gauss_kernel, settings.particle_movement_noise, settings.speed, fov=settings.fov, logging=settings.verbosity)
 
-        self.f = ParticleFilter(n_particles, sigma_gauss_kernel, particle_movement_noise, speed, fov=fov, logging=logging)
-
-        self._ms_bandwidth: float = ext_states_ms_bandwidth
+        self._ms_bandwidth: float = settings.ext_states_ms_bandwidth
     # end def
 
     def _set_sim_loop_step_part_conf(self):
@@ -377,6 +366,20 @@ class ParticleFilterSimulatorConfig(BaseFilterSimulatorConfig):
 # end class
 
 
+class ParticleFilterSimulatorConfigSettings(BaseFilterSimulatorConfigSettings):
+    def __init__(self):
+        super().__init__()
+
+        # Filter group - subclasses will rename it
+        self._add_attribute("sigma_gauss_kernel", float)
+        self._add_attribute("n_particles", int)
+        self._add_attribute("particle_movement_noise", float)
+        self._add_attribute("speed", float)
+        self._add_attribute("ext_states_ms_bandwidth", float, nullable=True)
+    # end def
+# end def
+
+
 def main(argv: List[str]):
     # Library settings
     sns.set(color_codes=True)
@@ -398,24 +401,16 @@ def main(argv: List[str]):
 
     # Convert data from certain coordinate systems to ENU, which is used internally
     if scenario_data.meta.coordinate_system == CoordSysConv.WGS84.value:
-        scenario_data = Wgs84ToEnuConverter.convert(scenario_data, args.observer)
+        scenario_data = Wgs84ToEnuConverter.convert(scenario_data, args.observer_position)
     # end if
 
-    sim = ParticleFilterSimulator(scenario_data=scenario_data, output_coord_system_conversion=args.output_coord_system_conversion, fn_out=args.output,
-                                  fn_out_video=args.output_video,
-                                  auto_step_interval=args.auto_step_interval, auto_step_autostart=args.auto_step_autostart, fov=args.fov,
-                                  limits_mode=args.limits_mode, observer=args.observer, logging=args.verbosity,
-                                  ext_states_ms_bandwidth=args.ext_states_ms_bandwidth, gospa_c=args.gospa_c, gospa_p=args.gospa_p,
-                                  n_particles=args.n_particles, sigma_gauss_kernel=args.sigma_gauss_kernel, particle_movement_noise=args.particle_movement_noise,
-                                  speed=args.speed,
-                                  gui=args.gui, density_draw_style=args.density_draw_style,
-                                  n_bins_density_map=args.n_bins_density_map,
-                                  draw_layers=args.draw_layers, sim_loop_step_parts=args.sim_loop_step_parts, show_legend=args.show_legend, show_colorbar=args.show_colorbar,
-                                  start_window_max=args.start_window_max, init_kbd_cmds=args.init_kbd_cmds)
+    args.scenario_data = scenario_data
 
-    sim.fn_out_seq_max = args.output_seq_max
-    sim.fn_out_fill_gaps = args.output_fill_gaps
+    del args.input
 
+    # Run the simulator
+    s = ParticleFilterSimulatorConfigSettings.from_obj(args)
+    sim = ParticleFilterSimulator(s)
     sim.run()
 # end def main
 

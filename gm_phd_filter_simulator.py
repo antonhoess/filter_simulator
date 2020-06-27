@@ -18,7 +18,7 @@ from scenario_data.scenario_data_simulator import ScenarioDataSimulator
 from filter_simulator.window_helper import LimitsMode
 from scenario_data.scenario_data import ScenarioData
 from base_filter_simulator import SimStepPartBase, AdditionalAxisBase
-from gm_phd_base_filter_simulator import GmPhdBaseFilterSimulator, GmPhdBaseFilterSimulatorConfig
+from gm_phd_base_filter_simulator import GmPhdBaseFilterSimulator, GmPhdBaseFilterSimulatorConfig, GmPhdBaseFilterSimulatorConfigSettings
 from gm_phd_base_filter_simulator import DrawLayer, DensityDrawStyle, DataProviderType
 
 
@@ -41,27 +41,12 @@ class AdditionalAxis(AdditionalAxisBase):
 
 
 class GmPhdFilterSimulator(GmPhdBaseFilterSimulator):
-    def __init__(self, scenario_data: ScenarioData, output_coord_system_conversion: CoordSysConv,
-                 fn_out: str, fn_out_video: Optional[str], auto_step_interval: int, auto_step_autostart: bool, fov: Limits, birth_area: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
-                 birth_gmm: List[GmComponent], p_survival: float, p_detection: float,
-                 f: np.ndarray, q: np.ndarray, h: np.ndarray, r: np.ndarray, rho_fa: float, gate_thresh: Optional[float],
-                 trunc_thresh: float, merge_dist_measure: DistMeasure, merge_thresh: float, max_components: int,
-                 ext_states_bias: float, ext_states_use_integral: bool,
-                 gospa_c: float, gospa_p: int,
-                 gui: bool, density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int,
-                 draw_layers: Optional[List[DrawLayer]], sim_loop_step_parts: List[SimStepPart], show_legend: Optional[Union[int, str]], show_colorbar: bool, start_window_max: bool,
-                 init_kbd_cmds: List[str]):
+    def __init__(self, settings: GmPhdFilterSimulatorConfigSettings) -> None:
+        s = GmPhdBaseFilterSimulatorConfigSettings.from_obj(settings)
+        GmPhdBaseFilterSimulator.__init__(self, s)
 
-        GmPhdBaseFilterSimulator.__init__(self, scenario_data, output_coord_system_conversion,
-                                          fn_out, fn_out_video, auto_step_interval, auto_step_autostart, fov, birth_area, limits_mode, observer, logging,
-                                          trunc_thresh, merge_dist_measure, merge_thresh, max_components,
-                                          ext_states_bias, ext_states_use_integral,
-                                          gospa_c, gospa_p,
-                                          gui, density_draw_style, n_samples_density_map, n_bins_density_map,
-                                          draw_layers, sim_loop_step_parts, show_legend, show_colorbar, start_window_max,
-                                          init_kbd_cmds)
-
-        self.f = GmPhdFilter(birth_gmm=birth_gmm, survival=p_survival, detection=p_detection, f=f, q=q, h=h, r=r, rho_fa=rho_fa, gate_thresh=gate_thresh, logging=logging)
+        self.f = GmPhdFilter(birth_gmm=settings.birth_gmm, survival=settings.p_survival, detection=settings.p_detection, f=settings.f, q=settings.q,
+                             h=settings.h, r=settings.r, rho_fa=settings.rho_fa, gate_thresh=settings.gate_thresh, logging=settings.verbosity)
     # end def
 
     def _set_sim_loop_step_part_conf(self):
@@ -213,6 +198,13 @@ class GmPhdFilterSimulatorConfig(GmPhdBaseFilterSimulatorConfig):
 # end class
 
 
+class GmPhdFilterSimulatorConfigSettings(GmPhdBaseFilterSimulatorConfigSettings):
+    def __init__(self):
+        super().__init__()
+    # end def
+# end def
+
+
 def main(argv: List[str]):
     # Library settings
     sns.set(color_codes=True)
@@ -233,8 +225,8 @@ def main(argv: List[str]):
     if args.transition_model == TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND:
         m = PcwConstWhiteAccelModelNd(dim=2, sigma=(args.sigma_accel_x, args.sigma_accel_y))
 
-        args.f = m.eval_f(args.dt)
-        args.q = m.eval_q(args.dt)
+        args.f = m.eval_f(args.delta_t)
+        args.q = m.eval_q(args.delta_t)
     # end if
 
     # Set the false alarm rate
@@ -265,27 +257,20 @@ def main(argv: List[str]):
         # end if
 
     else:  # data_provider == DataProviderType.SIMULATOR
-        scenario_data = ScenarioDataSimulator(f=args.f, q=args.q, dt=args.dt, t_max=args.sim_t_max, n_birth=args.n_birth, var_birth=args.var_birth, n_fa=args.n_fa, var_fa=args.var_fa,
+        scenario_data = ScenarioDataSimulator(f=args.f, q=args.q, dt=args.delta_t, t_max=args.sim_t_max, n_birth=args.n_birth, var_birth=args.var_birth, n_fa=args.n_fa, var_fa=args.var_fa,
                                               fov=args.fov, birth_area=args.birth_area,
                                               p_survival=args.p_survival, p_detection=args.p_detection, birth_dist=args.birth_dist, sigma_vel_x=args.sigma_vel_x, sigma_vel_y=args.sigma_vel_y,
                                               birth_gmm=args.birth_gmm).run()
     # end if
 
-    sim = GmPhdFilterSimulator(scenario_data=scenario_data, output_coord_system_conversion=args.output_coord_system_conversion, fn_out=args.output,
-                               fn_out_video=args.output_video,
-                               auto_step_interval=args.auto_step_interval, auto_step_autostart=args.auto_step_autostart, fov=args.fov, birth_area=args.birth_area,
-                               limits_mode=args.limits_mode, observer=args.observer, logging=args.verbosity,
-                               birth_gmm=args.birth_gmm, p_survival=args.p_survival, p_detection=args.p_detection,
-                               f=args.f, q=args.q, h=args.h, r=args.r, rho_fa=args.rho_fa, gate_thresh=args.gate_thresh,
-                               trunc_thresh=args.trunc_thresh, merge_dist_measure=args.merge_dist_measure, merge_thresh=args.merge_thresh, max_components=args.max_components,
-                               ext_states_bias=args.ext_states_bias, ext_states_use_integral=args.ext_states_use_integral, gospa_c=args.gospa_c, gospa_p=args.gospa_p,
-                               gui=args.gui, density_draw_style=args.density_draw_style, n_samples_density_map=args.n_samples_density_map, n_bins_density_map=args.n_bins_density_map,
-                               draw_layers=args.draw_layers, sim_loop_step_parts=args.sim_loop_step_parts, show_legend=args.show_legend, show_colorbar=args.show_colorbar,
-                               start_window_max=args.start_window_max, init_kbd_cmds=args.init_kbd_cmds)
+    args.scenario_data = scenario_data
 
-    sim.fn_out_seq_max = args.output_seq_max
-    sim.fn_out_fill_gaps = args.output_fill_gaps
+    del args.input
+    del args.data_provider
 
+    # Run the simulator
+    s = GmPhdFilterSimulatorConfigSettings.from_obj(args)
+    sim = GmPhdFilterSimulator(s)
     sim.run()
 # end def main
 

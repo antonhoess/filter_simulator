@@ -7,15 +7,17 @@ from abc import ABC
 from typing import Sequence, List, Optional, Union
 from matplotlib.patches import Ellipse, Rectangle
 import seaborn as sns
+from abc import abstractmethod
 
 from filter_simulator.common import Logging, Limits, Position
 from filter_simulator.dyn_matrix import TransitionModel
 from gm_phd_filter import GmComponent, Gmm, DistMeasure
 from scenario_data.scenario_data_simulator import BirthDistribution
-from base_filter_simulator import BaseFilterSimulator, BaseFilterSimulatorConfig, DrawLayerBase, SimStepPartBase, DensityDrawStyleBase
+from base_filter_simulator import BaseFilterSimulator, BaseFilterSimulatorConfig, DrawLayerBase, SimStepPartBase, DensityDrawStyleBase, AdditionalAxisBase
 from filter_simulator.window_helper import LimitsMode
 from scenario_data.scenario_data import ScenarioData
 from scenario_data.scenario_data_converter import CoordSysConv
+from base_filter_simulator import BaseFilterSimulatorConfigSettings
 
 
 class DrawLayer(DrawLayerBase):
@@ -52,31 +54,57 @@ class DataProviderType(Enum):
 # end class
 
 
+class GmPhdBaseFilterSimulatorConfigSettings(BaseFilterSimulatorConfigSettings):
+    def __init__(self):
+        super().__init__()
+
+        # General group
+
+        # Filter group - subclasses will rename it
+        self._add_attribute("birth_gmm", Gmm)
+        self._add_attribute("p_survival", float)
+        self._add_attribute("p_detection", float)
+        self._add_attribute("f", np.ndarray)
+        self._add_attribute("q", np.ndarray)
+        self._add_attribute("h", np.ndarray)
+        self._add_attribute("r", np.ndarray)
+        self._add_attribute("rho_fa", float, nullable=True)
+        self._add_attribute("gate_thresh", float, nullable=True)
+        self._add_attribute("trunc_thresh", float)
+        self._add_attribute("merge_dist_measure", DistMeasure)
+        self._add_attribute("merge_thresh", float)
+        self._add_attribute("max_components", int)
+        self._add_attribute("ext_states_bias", float)
+        self._add_attribute("ext_states_use_integral", bool)
+
+        # Data Simulator group
+        self._add_attribute("birth_area", Limits, nullable=True)
+
+        # Simulator group
+
+        # File Reader group
+
+        # File Storage group
+
+        # Visualization group
+        self._add_attribute("n_samples_density_map", int)
+    # end def
+# end def
+
+
 class GmPhdBaseFilterSimulator(BaseFilterSimulator):
-    def __init__(self, scenario_data: ScenarioData, output_coord_system_conversion: CoordSysConv,
-                 fn_out: str, fn_out_video: Optional[str], auto_step_interval: int, auto_step_autostart: bool, fov: Limits, birth_area: Limits, limits_mode: LimitsMode, observer: Position, logging: Logging,
-                 trunc_thresh: float, merge_dist_measure: DistMeasure, merge_thresh: float, max_components: int,
-                 ext_states_bias: float, ext_states_use_integral: bool,
-                 gospa_c: float, gospa_p: int,
-                 gui: bool, density_draw_style: DensityDrawStyle, n_samples_density_map: int, n_bins_density_map: int,
-                 draw_layers: Optional[List[DrawLayer]], sim_loop_step_parts: List[SimStepPartBase], show_legend: Optional[Union[int, str]], show_colorbar: bool, start_window_max: bool,
-                 init_kbd_cmds: List[str]):
+    def __init__(self, settings: GmPhdBaseFilterSimulatorConfigSettings) -> None:
+        s = BaseFilterSimulatorConfigSettings.from_obj(settings)
+        BaseFilterSimulator.__init__(self, s)
 
-        BaseFilterSimulator.__init__(self, scenario_data, output_coord_system_conversion,
-                                     fn_out, fn_out_video, auto_step_interval, auto_step_autostart, fov, limits_mode, observer, logging,
-                                     gospa_c, gospa_p,
-                                     gui, density_draw_style, n_bins_density_map,
-                                     draw_layers, sim_loop_step_parts, show_legend, show_colorbar, start_window_max,
-                                     init_kbd_cmds)
-
-        self._trunc_thresh: float = trunc_thresh
-        self._merge_dist_measure: DistMeasure = merge_dist_measure
-        self._merge_thresh: float = merge_thresh
-        self._max_components: int = max_components
-        self._ext_states_bias: float = ext_states_bias
-        self._ext_states_use_integral: bool = ext_states_use_integral
-        self._n_samples_density_map: int = n_samples_density_map
-        self._birth_area: Limits = birth_area
+        self._trunc_thresh: float = settings.trunc_thresh
+        self._merge_dist_measure: DistMeasure = settings.merge_dist_measure
+        self._merge_thresh: float = settings.merge_thresh
+        self._max_components: int = settings.max_components
+        self._ext_states_bias: float = settings.ext_states_bias
+        self._ext_states_use_integral: bool = settings.ext_states_use_integral
+        self._n_samples_density_map: int = settings.n_samples_density_map
+        self._birth_area: Limits = settings.birth_area
     # end def
 
     def _sim_loop_extract_states(self):
@@ -236,6 +264,29 @@ class GmPhdBaseFilterSimulator(BaseFilterSimulator):
     def get_draw_layer_enum() -> DrawLayerBase:
         return DrawLayer
     # end def
+
+    @staticmethod
+    @abstractmethod
+    def get_additional_axis_enum() -> AdditionalAxisBase:
+        pass
+    # end def
+
+    @staticmethod
+    @abstractmethod
+    def get_additional_axis_by_short_name(short_name: str) -> Optional[AdditionalAxisBase]:
+        pass
+    # end def
+
+    @abstractmethod
+    def do_additional_axis_plot(self, axis: AdditionalAxisBase) -> bool:
+        pass
+    # end def
+
+    @staticmethod
+    @abstractmethod
+    def get_help() -> str:  # Need to be abstract to enforce the evaluation in the place, where the subclass is known, since in this place here it's unknown
+        pass
+    # end def
 # end class GmPhdBaseFilterSimulator
 
 
@@ -274,7 +325,7 @@ class GmPhdBaseFilterSimulatorConfig(ABC, BaseFilterSimulatorConfig):
                            help=f"Sets the transition model. If set to {str(TransitionModel.INDIVIDUAL)}, the matrices F (see parameter --mat_f) and Q (see parameter --mat_q) need to be specified. "
                                 f"{str(TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND)} stands for Piecewise Constant Acceleration Model.")
 
-        group.add_argument("--delta_t", metavar="[>0.0 - N]", dest="dt", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
+        group.add_argument("--delta_t", metavar="[>0.0 - N]", type=BaseFilterSimulatorConfig.InRange(float, min_ex_val=.0), default=1.,
                            help="Sets the time betwen two measurements to DELTA_T. Does not work with the --transition_model parameter set to TransitionModel.INDIVIDUAL.")
 
         group.add_argument("--mat_f", dest="f", action=self._EvalAction, comptype=np.ndarray, user_eval=self._user_eval, default=np.eye(2),
