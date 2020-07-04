@@ -283,7 +283,7 @@ class GmPanjerPhdFilter:
 
             # Subsume all collected GMM components
             if len(collect_gmm_comps) > 1:
-                self.gmm[ii] = Gmm(collect_gmm_comps).get_unified_comp(norm_cov=False)
+                self.gmm[ii] = Gmm(collect_gmm_comps).get_unified_comp()
             # end if
 
             ii += 1  # Just take next GMM component

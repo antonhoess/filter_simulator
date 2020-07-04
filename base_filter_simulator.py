@@ -56,23 +56,23 @@ class BaseFilterSimulator(FilterSimulator):
         # end
     # end
 
-    def __init__(self, settings: BaseFilterSimulatorConfigSettings) -> None:
-        self.__sim_loop_step_parts: List[SimStepPartBase] = settings.sim_loop_step_parts  # Needs to be set before calling the contructor of the FilterSimulator, since it already needs this values there
+    def __init__(self, s: BaseFilterSimulatorConfigSettings) -> None:
+        self.__sim_loop_step_parts: List[SimStepPartBase] = s.sim_loop_step_parts  # Needs to be set before calling the contructor of the FilterSimulator, since it already needs this values there
 
-        s = FilterSimulatorConfigSettings.from_obj(settings)
-        FilterSimulator.__init__(self, s)
+        s_sup = FilterSimulatorConfigSettings.from_obj(s)
+        FilterSimulator.__init__(self, s_sup)
 
         self.f = None
 
-        self._gospa_c: float = settings.gospa_c
-        self._gospa_p: int = settings.gospa_p
-        self._density_draw_style: DensityDrawStyleBase = settings.density_draw_style
-        self._n_bins_density_map: int = settings.n_bins_density_map
-        self._logging: Logging = settings.verbosity
-        self._draw_layers: Optional[List[DrawLayerBase]] = settings.draw_layers
-        self._show_legend: Optional[Union[int, str]] = settings.show_legend
-        self._fov: Limits = settings.fov
-        self._init_kbd_cmds = settings.init_kbd_cmds
+        self._gospa_c: float = s.gospa_c
+        self._gospa_p: int = s.gospa_p
+        self._density_draw_style: DensityDrawStyleBase = s.density_draw_style
+        self._n_bins_density_map: int = s.n_bins_density_map
+        self._logging: Logging = s.verbosity
+        self._draw_layers: Optional[List[DrawLayerBase]] = s.draw_layers
+        self._show_legend: Optional[Union[int, str]] = s.show_legend
+        self._fov: Limits = s.fov
+        self._init_kbd_cmds = s.init_kbd_cmds
         # --
         self._active_draw_layers: List[bool] = [True for _ in self._draw_layers]
         self._ext_states: List[List[np.ndarray]] = list()

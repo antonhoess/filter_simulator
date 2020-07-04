@@ -331,21 +331,20 @@ class Gmm:
             comp.weight += summand
     # end def
 
-    def get_unified_comp(self, norm_cov=True):
+    def get_unified_comp(self):
         # Create unified new component from subsumed ones
         agg_weight = self.get_total_weight()
 
+        # Mean
         loc = np.sum(np.array([comp.weight * comp.loc for comp in self]), 0) / agg_weight
 
+        # Covariance
         cov = 0
         for comp in self:
             dist = loc - comp.loc  # The original implementation used the weightiest component instead of the new location calculated just above
-            cov += comp.weight * (comp.cov + np.dot(dist, dist.T))  # Why is no sqrt() used? # Wrong implementation in the original code using "dist * dist.T" instead of np.dot()
+            cov += comp.weight * (comp.cov + np.dot(dist, dist.T))  # Wrong implementation in the original code using "dist * dist.T" instead of np.dot()
         # end for
-
-        if norm_cov:
-            cov /= agg_weight
-        # end if
+        cov /= agg_weight
 
         return GmComponent(agg_weight, loc, cov)
 # end class

@@ -66,14 +66,15 @@ class AdditionalAxis(AdditionalAxisBase):
 
 
 class ParticleFilterSimulator(BaseFilterSimulator):
-    def __init__(self, settings) -> None:
-        self.__sim_loop_step_parts: List[SimStepPart] = settings.sim_loop_step_parts  # Needs to be set before calling the contructor of the FilterSimulator, since it already needs this values there
+    def __init__(self, s: ParticleFilterSimulatorConfigSettings) -> None:
+        self.__sim_loop_step_parts: List[SimStepPart] = s.sim_loop_step_parts  # Needs to be set before calling the contructor of the FilterSimulator, since it already needs this values there
 
-        BaseFilterSimulator.__init__(self, settings)
+        s_sup = BaseFilterSimulatorConfigSettings.from_obj(s)
+        BaseFilterSimulator.__init__(self, s_sup)
 
-        self.f = ParticleFilter(settings.n_particles, settings.sigma_gauss_kernel, settings.particle_movement_noise, settings.speed, fov=settings.fov, logging=settings.verbosity)
+        self.f = ParticleFilter(n_part=s.n_particles, s_gauss=s.sigma_gauss_kernel, noise=s.particle_movement_noise, speed=s.speed, fov=s.fov, logging=s.verbosity)
 
-        self._ms_bandwidth: float = settings.ext_states_ms_bandwidth
+        self._ms_bandwidth: float = s.ext_states_ms_bandwidth
     # end def
 
     def _set_sim_loop_step_part_conf(self):

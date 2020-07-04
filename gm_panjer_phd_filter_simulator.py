@@ -46,12 +46,12 @@ class AdditionalAxis(AdditionalAxisBase):
 
 
 class GmPanjerPhdFilterSimulator(GmPhdBaseFilterSimulator):
-    def __init__(self, settings: GmPanjerPhdFilterSimulatorConfigSettings) -> None:
-        s = GmPhdBaseFilterSimulatorConfigSettings.from_obj(settings)
-        GmPhdBaseFilterSimulator.__init__(self, s)
+    def __init__(self, s: GmPanjerPhdFilterSimulatorConfigSettings) -> None:
+        s_sup = GmPhdBaseFilterSimulatorConfigSettings.from_obj(s)
+        GmPhdBaseFilterSimulator.__init__(self, s_sup)
 
-        self.f = GmPanjerPhdFilter(birth_gmm=settings.birth_gmm, var_birth=settings.var_birth, survival=settings.p_survival, detection=settings.p_detection, f=settings.f, q=settings.q,
-                                   h=settings.h, r=settings.r, rho_fa=settings.rho_fa, gate_thresh=settings.gate_thresh, logging=settings.verbosity)
+        self.f = GmPanjerPhdFilter(birth_gmm=s.birth_gmm, var_birth=s.var_birth, survival=s.p_survival, detection=s.p_detection, f=s.f, q=s.q,
+                                   h=s.h, r=s.r, rho_fa=s.rho_fa, gate_thresh=s.gate_thresh, logging=s.verbosity)
 
         # --
         self._variance_values: List[float] = list()

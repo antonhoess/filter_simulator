@@ -87,38 +87,39 @@ class DragStart:
 
 class FilterSimulator(ABC):
     def __init__(self, settings: FilterSimulatorConfigSettings) -> None:
-        self._scenario_data = settings.scenario_data
-        self.__output_coord_system_conversion: CoordSysConv = settings.output_coord_system_conversion
-        self.__fn_out: str = settings.output
-        self.__fn_out_video: str = settings.output_video
+        s = settings
+        self._scenario_data = s.scenario_data
+        self.__output_coord_system_conversion: CoordSysConv = s.output_coord_system_conversion
+        self.__fn_out: str = s.output
+        self.__fn_out_video: str = s.output_video
         self.__frames: FrameList = FrameList()
         self.__simulation_direction: SimulationDirection = SimulationDirection.FORWARD
         self.__step: int = -1
         self.__next_part_step: bool = False
-        self.__auto_step_interval: int = settings.auto_step_interval
-        self.__auto_step: bool = settings.auto_step_autostart  # Only sets the initial value, which can be changed later on
+        self.__auto_step_interval: int = s.auto_step_interval
+        self.__auto_step: bool = s.auto_step_autostart  # Only sets the initial value, which can be changed later on
         self.__ax: Optional[matplotlib.axes.Axes] = None
         self.__cax: Optional[matplotlib.axes.Axes] = None
         self.__fig: Optional[matplotlib.pyplot.figure] = None
-        self.__gui = settings.gui
-        self._logging: Logging = settings.verbosity
-        self.__observer: Position = settings.observer_position if settings.observer_position is not None else Position(0, 0)
-        self.__observer_is_set = (settings.observer_position is not None)
-        self._show_colorbar: bool = settings.show_colorbar
-        self.__start_window_max: bool = settings.start_window_max
-        self.__window_mode_checker: WindowModeChecker = WindowModeChecker(default_window_mode=WindowMode.SIMULATION, logging=settings.verbosity)
+        self.__gui = s.gui
+        self._logging: Logging = s.verbosity
+        self.__observer: Position = s.observer_position if s.observer_position is not None else Position(0, 0)
+        self.__observer_is_set = (s.observer_position is not None)
+        self._show_colorbar: bool = s.show_colorbar
+        self.__start_window_max: bool = s.start_window_max
+        self.__window_mode_checker: WindowModeChecker = WindowModeChecker(default_window_mode=WindowMode.SIMULATION, logging=s.verbosity)
         self.__manual_frames: FrameList = FrameList()
         self.__refresh: threading.Event = threading.Event()
         self.__refresh_finished: threading.Event = threading.Event()
-        self._fov: Limits = settings.fov
-        self.__det_limits: Limits = copy.deepcopy(settings.fov)
-        self.__limits_mode: LimitsMode = settings.limits_mode
+        self._fov: Limits = s.fov
+        self.__det_limits: Limits = copy.deepcopy(s.fov)
+        self.__limits_mode: LimitsMode = s.limits_mode
         self.__limits_mode_inited: bool = False
         self.__prev_lim: Limits = Limits(0, 0, 0, 0)
 
         self.__sim_step_part_conf = self._set_sim_loop_step_part_conf()
-        self.__fn_out_seq_max: int = settings.output_seq_max
-        self.__fn_out_fill_gaps = settings.output_fill_gaps
+        self.__fn_out_seq_max: int = s.output_seq_max
+        self.__fn_out_fill_gaps = s.output_fill_gaps
 
         self.__anim = None
         self.__movie_writer = None

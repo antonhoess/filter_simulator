@@ -93,18 +93,18 @@ class GmPhdBaseFilterSimulatorConfigSettings(BaseFilterSimulatorConfigSettings):
 
 
 class GmPhdBaseFilterSimulator(BaseFilterSimulator):
-    def __init__(self, settings: GmPhdBaseFilterSimulatorConfigSettings) -> None:
-        s = BaseFilterSimulatorConfigSettings.from_obj(settings)
-        BaseFilterSimulator.__init__(self, s)
+    def __init__(self, s: GmPhdBaseFilterSimulatorConfigSettings) -> None:
+        s_sup = BaseFilterSimulatorConfigSettings.from_obj(s)
+        BaseFilterSimulator.__init__(self, s_sup)
 
-        self._trunc_thresh: float = settings.trunc_thresh
-        self._merge_dist_measure: DistMeasure = settings.merge_dist_measure
-        self._merge_thresh: float = settings.merge_thresh
-        self._max_components: int = settings.max_components
-        self._ext_states_bias: float = settings.ext_states_bias
-        self._ext_states_use_integral: bool = settings.ext_states_use_integral
-        self._n_samples_density_map: int = settings.n_samples_density_map
-        self._birth_area: Limits = settings.birth_area
+        self._trunc_thresh: float = s.trunc_thresh
+        self._merge_dist_measure: DistMeasure = s.merge_dist_measure
+        self._merge_thresh: float = s.merge_thresh
+        self._max_components: int = s.max_components
+        self._ext_states_bias: float = s.ext_states_bias
+        self._ext_states_use_integral: bool = s.ext_states_use_integral
+        self._n_samples_density_map: int = s.n_samples_density_map
+        self._birth_area: Limits = s.birth_area
     # end def
 
     def _sim_loop_extract_states(self):

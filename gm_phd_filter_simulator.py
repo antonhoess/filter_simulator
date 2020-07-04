@@ -41,12 +41,12 @@ class AdditionalAxis(AdditionalAxisBase):
 
 
 class GmPhdFilterSimulator(GmPhdBaseFilterSimulator):
-    def __init__(self, settings: GmPhdFilterSimulatorConfigSettings) -> None:
-        s = GmPhdBaseFilterSimulatorConfigSettings.from_obj(settings)
-        GmPhdBaseFilterSimulator.__init__(self, s)
+    def __init__(self, s: GmPhdFilterSimulatorConfigSettings) -> None:
+        s_sup = GmPhdBaseFilterSimulatorConfigSettings.from_obj(s)
+        GmPhdBaseFilterSimulator.__init__(self, s_sup)
 
-        self.f = GmPhdFilter(birth_gmm=settings.birth_gmm, survival=settings.p_survival, detection=settings.p_detection, f=settings.f, q=settings.q,
-                             h=settings.h, r=settings.r, rho_fa=settings.rho_fa, gate_thresh=settings.gate_thresh, logging=settings.verbosity)
+        self.f = GmPhdFilter(birth_gmm=s.birth_gmm, survival=s.p_survival, detection=s.p_detection, f=s.f, q=settings.q,
+                             h=s.h, r=s.r, rho_fa=s.rho_fa, gate_thresh=s.gate_thresh, logging=s.verbosity)
     # end def
 
     def _set_sim_loop_step_part_conf(self):
