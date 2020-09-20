@@ -151,6 +151,14 @@ class GmPanjerPhdFilter:
             # end if
         # end if
 
+        # % check if the values are okay in the (positive) binomial case
+        # if cst.nBirth>cst.varBirth
+        #     alphaval = cst.nBirth^2/(cst.varBirth-cst.nBirth);
+        #     alphaval = floor(alphaval); % must not be a non-integer!
+        #     cst.varBirth = cst.nBirth + cst.nBirth^2/alphaval;
+        #     fprintf('Warning: binomial birth. Adjusted variance to %g\n',cst.varBirth);
+        # end
+
         beta_pred = mean_pred / (var_new - mean_pred) if var_new - mean_pred != 0 else np.inf  # Avoid error on division by zero
         alpha_pred = mean_pred * beta_pred
 
@@ -159,7 +167,7 @@ class GmPanjerPhdFilter:
         # These two are the mean and covariance of the expected observation
         nu = [np.dot(self._h, comp.loc) for comp in self.gmm]  # nu = H * x # H (observation model) maps the true state space into the observed space
         s = [np.dot(np.dot(self._h, comp.cov), self._h.T) + self._r for comp in self.gmm]  # Innovation covariance: S = H * P * H.T + R
-        s_inv = [np.linalg.inv(s_) for s_ in s] if self._gate_thresh else None  # Computationally expensive and will get used many times below
+        s_inv = [np.linalg.inv(s_) for s_ in s] if self._gate_thresh else None  # Computationally expensive and will get used many times below - calculate only when gating is active
 
         # Not sure about any physical interpretation of these two...
         k = [np.dot(np.dot(comp.cov, self._h.T), np.linalg.inv(s[index])) for index, comp in enumerate(self.gmm)]  # Kalman Gain: K = P * H.T * S^{-1}
@@ -229,7 +237,7 @@ class GmPanjerPhdFilter:
         mean_update = mu_phi * l1 + sum_muz_l1z
         self._variance = mean_update + mu_phi ** 2 * (l2 - l1 ** 2) + 2 * mu_phi * sum_muz_l2z + sumsum
 
-        assert self._variance >= 0, "Variance < 0!"
+        assert self._variance >= 0, f"Variance ({self._variance}) < 0!"
 
         # Final update of the weights (var had to be computed first)
         ############################################################

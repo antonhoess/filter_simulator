@@ -8,6 +8,7 @@ import numpy as np
 from datetime import datetime
 import seaborn as sns
 from enum import auto
+import math
 
 from filter_simulator.common import Logging, Limits, Position
 from filter_simulator.filter_simulator import SimStepPartConf
@@ -55,6 +56,12 @@ class GmPanjerPhdFilterSimulator(GmPhdBaseFilterSimulator):
 
         # --
         self._variance_values: List[float] = list()
+    # end def
+
+    def restart(self):
+        self._variance_values.clear()
+
+        GmPhdBaseFilterSimulator.restart(self)
     # end def
 
     def _set_sim_loop_step_part_conf(self):
@@ -145,8 +152,11 @@ class GmPanjerPhdFilterSimulator(GmPhdBaseFilterSimulator):
     # end def
 
     def get_ax_title(self) -> str:
+        n_states_real = sum(map(lambda gtt: gtt.begin_step <= self._step < gtt.begin_step + len(gtt.points), self._scenario_data.gtts))  # Real number of targets
+        n_targets = self.f.gmm.get_total_weight()  # Estimated targets by the filter intensity
+
         return f"Sim-Step: {self._step if self._step >= 0 else '-'}, Sim-SubStep: {self._last_step_part}, # Est. States: " \
-            f"{len(self._ext_states[-1]) if len(self._ext_states) > 0 else '-'}, # GMM-Components: {len(self.f.gmm)}, # Variance: {self.f.variance:.2f}, # GOSPA: " \
+            f"{len(self._ext_states[-1]) if len(self._ext_states) > 0 else '-'} ({n_targets:.02f} / {n_states_real}), # GMM-Components: {len(self.f.gmm)}, # Variance: {self.f.variance:.2f}, # GOSPA: " \
             f"{self._gospa_values[-1] if len(self._gospa_values) > 0 else '-':.04}"
     # end def
 
@@ -235,6 +245,32 @@ class GmPanjerPhdFilterSimulatorConfig(GmPhdBaseFilterSimulatorConfig):
                 SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER, SimStepPart.LOAD_NEXT_FRAME]
     # end def
 
+    # XXX temp. For testing purposes
+    @staticmethod
+    def get_sim_loop_step_parts_default2() -> List[SimStepPartBase]:
+        return [SimStepPart.USER_INITIAL_KEYBOARD_COMMANDS,
+                SimStepPart.LOAD_NEXT_FRAME, SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER,
+                SimStepPart.USER_PREDICT, SimStepPart.USER_UPDATE, SimStepPart.USER_PRUNE, SimStepPart.USER_MERGE,
+                SimStepPart.USER_EXTRACT_STATES, SimStepPart.USER_CALC_GOSPA]
+    # end def
+    @staticmethod
+    def get_sim_loop_step_parts_default3() -> List[SimStepPartBase]:
+        return [SimStepPart.USER_INITIAL_KEYBOARD_COMMANDS,
+                SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER,
+                SimStepPart.USER_PREDICT,
+                SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER,
+                SimStepPart.USER_UPDATE,
+                SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER,
+                SimStepPart.USER_PRUNE,
+                SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER,
+                SimStepPart.USER_MERGE,
+                SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER,
+                SimStepPart.USER_EXTRACT_STATES,
+                SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER,
+                SimStepPart.USER_CALC_GOSPA,
+                SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER, SimStepPart.LOAD_NEXT_FRAME]
+    # end def
+
     @staticmethod
     def _user_eval(s: str):
         return eval(s)
@@ -287,6 +323,17 @@ def main(argv: List[str]):
         factor = float(args.var_fa) / args.n_fa
         args.n_fa = int(args.rho_fa * get_state_space_volume_from_fov(args.fov))
         args.var_fa = int(args.n_fa * factor)
+    # end if
+
+    if args.n_birth > args.var_birth:
+        var_birth_ori = args.var_birth
+        alphaval = args.n_birth ** 2 / (args.var_birth - args.n_birth)
+        alphaval = math.floor(alphaval)  # Must not be a non-integer!
+        args.var_birth = args.n_birth + args.n_birth ** 2 / alphaval
+
+        if var_birth_ori != args.var_birth:
+            print(f"Warning: binomial birth. Adjusted variance to {args.var_birth:g}\n")
+        # end if
     # end if
 
     # Get data from a data provider

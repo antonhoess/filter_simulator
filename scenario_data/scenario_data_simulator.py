@@ -155,7 +155,7 @@ class ScenarioDataSimulator:
         self.__d.ds = FrameList()
         self.__d.fas = FrameList()
         self.__d.mds = FrameList()
-        self.__d.gtts = []
+        self.__d.gtts = list()
         self.__d.tds = None  # Will not be set here
 
         if self.__show_visu:
@@ -210,6 +210,13 @@ class ScenarioDataSimulator:
             ########################################
             # Determine number of newly born targets
             n_births = self.__panjer(num=self.__n_birth, var=self.__var_birth)
+            # XXX Temp. for testing purposes
+            # if not hasattr(self, "setxx"):
+            #     self.setxx = True
+            #     n_births = 1
+            # else:
+            #     n_births = 0
+            # # end if
 
             for _ in range(n_births):
                 if self.__birth_dist is BirthDistribution.UNIFORM_AREA:
@@ -224,7 +231,7 @@ class ScenarioDataSimulator:
                 gtt = GroundTruthTrack()
                 gtt.begin_step = tt
                 gtt.points.append(Position(obj[0], obj[1]))
-                gtt.states = []  # Added dynamically
+                gtt.states = list()  # Added dynamically
                 gtt.states.append(obj)
                 gtt.survived = True  # Added dynamically
                 self.__d.gtts.append(gtt)

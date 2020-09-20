@@ -342,7 +342,7 @@ class Gmm:
         cov = 0
         for comp in self:
             dist = loc - comp.loc  # The original implementation used the weightiest component instead of the new location calculated just above
-            cov += comp.weight * (comp.cov + np.dot(dist, dist.T))  # Wrong implementation in the original code using "dist * dist.T" instead of np.dot()
+            cov += comp.weight * (comp.cov + np.dot(dist, dist.T))  # Wrong implementation in the original code using "dist * dist.T" instead of np.dot()? Or does  it the same?
         # end for
         cov /= agg_weight
 

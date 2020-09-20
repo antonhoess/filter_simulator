@@ -30,7 +30,9 @@ class DrawLayer(DrawLayerBase):
     UNTIL_TRAJ_POS = auto()
     ALL_DET = auto()
     ALL_DET_CONN = auto()
+    CUR_MISSED_DET = auto()
     UNTIL_MISSED_DET = auto()
+    CUR_FALSE_ALARM = auto()
     UNTIL_FALSE_ALARM = auto()
     CUR_GMM_COV_ELL = auto()
     CUR_GMM_COV_MEAN = auto()
@@ -107,6 +109,12 @@ class GmPhdBaseFilterSimulator(BaseFilterSimulator):
         self._birth_area: Limits = s.birth_area
     # end def
 
+    def restart(self):
+        self.f.gmm = Gmm()
+
+        BaseFilterSimulator.restart(self)
+    # end def
+
     def _sim_loop_extract_states(self):
         self._last_step_part = "Extract States"
 
@@ -118,13 +126,17 @@ class GmPhdBaseFilterSimulator(BaseFilterSimulator):
         # end if
     # end def
 
-    def _calc_density(self, x: np.ndarray, y: np.ndarray) -> float:
+    def _calc_density(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         # Code taken from eval_grid_2d()
         points = np.stack((x, y), axis=-1).reshape(-1, 2)
 
         vals = self.f.gmm.eval_list(points, which_dims=(0, 1))
 
         return np.array(vals).reshape(x.shape)
+    # end def
+
+    def _eval_at(self, x: float, y: float) -> float:
+        return self._calc_density(np.asarray([x]), np.asarray([y]))[0]
     # end def
 
     @staticmethod
@@ -237,8 +249,14 @@ class GmPhdBaseFilterSimulator(BaseFilterSimulator):
         elif layer == DrawLayer.ALL_DET_CONN:
             return self._draw_all_det_conn
 
+        elif layer == DrawLayer.CUR_MISSED_DET:
+            return self._draw_cur_missed_det
+
         elif layer == DrawLayer.UNTIL_MISSED_DET:
             return self._draw_until_missed_det
+
+        elif layer == DrawLayer.CUR_FALSE_ALARM:
+            return self._draw_cur_false_alarm
 
         elif layer == DrawLayer.UNTIL_FALSE_ALARM:
             return self._draw_until_false_alarm
@@ -428,7 +446,7 @@ class GmPhdBaseFilterSimulatorConfig(ABC, BaseFilterSimulatorConfig):
 
         group.add_argument("--draw_layers", metavar=f"[{{{  ','.join([str(t) for t in DrawLayer]) }}}*]", action=self._EvalListAction, comptype=DrawLayerBase, user_eval=self._user_eval,
                            default=[ly for ly in DrawLayer if ly not in[DrawLayer.ALL_TRAJ_LINE, DrawLayer.ALL_TRAJ_POS, DrawLayer.ALL_DET, DrawLayer.ALL_DET_CONN,
-                                                                        DrawLayer.CUR_GMM_COV_ELL, DrawLayer.CUR_GMM_COV_MEAN]],
+                                                                        DrawLayer.CUR_GMM_COV_ELL, DrawLayer.CUR_GMM_COV_MEAN, DrawLayer.UNTIL_MISSED_DET, DrawLayer.UNTIL_FALSE_ALARM]],
                            help=f"Sets the list of drawing layers. Allows to draw only the required layers and in the desired order. If not set, a fixes set of layers are drawn in a fixed order. "
                            f"Example 1: [{str(DrawLayer.DENSITY_MAP)}, {str(DrawLayer.UNTIL_EST_STATE)}]\n"
                            f"Example 2: [layer for layer in DrawLayer if not layer == {str(DrawLayer.CUR_GMM_COV_ELL)} and not layer == {str(DrawLayer.CUR_GMM_COV_MEAN)}]")

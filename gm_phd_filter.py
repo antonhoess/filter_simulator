@@ -149,7 +149,7 @@ g.gmm
         #######################################
         born: Gmm = Gmm([deepcopy(comp) for comp in self.birth_gmm])
         # The original paper would do a spawning iteration as part of step 1.
-        spawned = Gmm()  # XXX not implemented
+        spawned = Gmm()  # Not implemented
 
         # Step 2 - prediction for existing targets
         ##########################################
@@ -293,7 +293,7 @@ g.gmm
           Returns a list of target states; doesn't alter model state.
           Based on Table 3 from Vo and Ma paper.
           I added the 'bias' factor, by analogy with the other method below."""
-        items = []
+        items = list()
 
         self._logging.print_verbose(Logging.DEBUG, "weights:")
         self._logging.print_verbose(Logging.DEBUG, str([round(comp.weight, 7) for comp in self.gmm]))
@@ -320,7 +320,7 @@ g.gmm
         # A temporary list of peaks p will gradually be decimated as we steal from its highest peaks
         peaks = [GmComponent(comp.weight, comp.loc, None) for comp in self._gmm]
 
-        items = []
+        items = list()
         while num_to_add > 0:
             # Find weightiest peak
             p_index = 0

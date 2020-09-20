@@ -153,8 +153,8 @@ class ParticleFilterSimulator(BaseFilterSimulator):
         # end if
     # end def
 
-    def _calc_density(self, x: np.ndarray, y: np.ndarray) -> float:
-        accum: float = 0.
+    def _calc_density(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        accum = np.zeros(x.shape)
 
         for p in self.f.particles:
             d_x: float = p.x - x
@@ -185,6 +185,10 @@ class ParticleFilterSimulator(BaseFilterSimulator):
         # end if
     # end def
 
+    def _eval_at(self, x: float, y: float) -> float:
+        return self._calc_density(np.asarray([x]), np.asarray([x]))[0]
+    # end def
+
     def _draw_particles(self, zorder):
         # Particles
         self._ax.scatter([p.x for p in self.f.particles], [p.y for p in self.f.particles], s=5, edgecolor="blue", marker="o", zorder=zorder, label="part. ($t_{k}$)")
@@ -208,8 +212,10 @@ class ParticleFilterSimulator(BaseFilterSimulator):
     # end def
 
     def get_ax_title(self) -> str:
+        n_states_real = sum(map(lambda gtt: gtt.begin_step <= self._step < gtt.begin_step + len(gtt.points), self._scenario_data.gtts))  # Real number of targets
+
         return f"Sim-Step: {self._step if self._step >= 0 else '-'}, Sim-SubStep: {self._last_step_part}, # Est. States: " \
-            f"{len(self._ext_states[-1]) if len(self._ext_states) > 0 else '-'}, # GOSPA: " \
+            f"{len(self._ext_states[-1]) if len(self._ext_states) > 0 else '-'} ({n_states_real}), # GOSPA: " \
             f"{self._gospa_values[-1] if len(self._gospa_values) > 0 else '-':.04}"
     # end def
 
@@ -242,8 +248,14 @@ class ParticleFilterSimulator(BaseFilterSimulator):
         elif layer == DrawLayer.ALL_DET_CONN:
             return self._draw_all_det_conn
 
+        elif layer == DrawLayer.CUR_MISSED_DET:
+            return self._draw_cur_missed_det
+
         elif layer == DrawLayer.UNTIL_MISSED_DET:
             return self._draw_until_missed_det
+
+        elif layer == DrawLayer.CUR_FALSE_ALARM:
+            return self._draw_cur_false_alarm
 
         elif layer == DrawLayer.UNTIL_FALSE_ALARM:
             return self._draw_until_false_alarm

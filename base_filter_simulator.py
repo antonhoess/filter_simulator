@@ -93,6 +93,13 @@ class BaseFilterSimulator(FilterSimulator):
         return self.__sim_loop_step_parts
     # end def
 
+    def restart(self):
+        self._ext_states.clear()
+        self._gospa_values.clear()
+
+        FilterSimulator.restart(self)
+    # end def
+
     def _sim_loop_calc_gospa(self):
         self._last_step_part = "Calculate GOSPA"
 
@@ -226,30 +233,57 @@ class BaseFilterSimulator(FilterSimulator):
     def _draw_all_det(self, zorder):
         # All detections - each frame's detections in a different color
         for frame in self._frames:
-            self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=5, linewidth=.5, edgecolor="green", marker="o", zorder=zorder, label="det. ($t_{0..T}$)")
+            if len(frame) > 0:
+                self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=5, linewidth=.5, edgecolor="green", marker="o", zorder=zorder, label="det. ($t_{0..T}$)")
+            # end if
         # end for
     # end def
 
     def _draw_all_det_conn(self, zorder):
         # Connections between all detections - only makes sense, if they are manually created or created in a very ordered way, otherwise it's just chaos
         for frame in self._frames:
-            self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5, linestyle="--", zorder=zorder, label="conn. det. ($t_{0..T}$)")
+            if len(frame) > 0:
+                self._ax.plot([det.x for det in frame], [det.y for det in frame], color="black", linewidth=.5, linestyle="--", zorder=zorder, label="conn. det. ($t_{0..T}$)")
+            # end if
         # end for
+    # end def
+
+    def _draw_cur_missed_det(self, zorder):
+        if self._scenario_data.mds is not None and self._step >= 0:
+            frame = self._scenario_data.mds[self._step]
+            if len(frame) > 0:
+                self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=12, linewidth=.5, color="black", marker="x", zorder=zorder, label="missed det. ($t_{k}$)")
+            # end if
+        # end if
     # end def
 
     def _draw_until_missed_det(self, zorder):
         if self._scenario_data.mds is not None:
             for frame in self._scenario_data.mds[:self._step + 1]:
-                self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=12, linewidth=.5, color="black", marker="x", zorder=zorder, label="missed det. ($t_{0..k}$)")
+                if len(frame) > 0:
+                    self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=12, linewidth=.5, color="black", marker="x", zorder=zorder, label="missed det. ($t_{0..k}$)")
+                # end if
             # end for
+        # end if
+    # end def
+
+    def _draw_cur_false_alarm(self, zorder):
+        if self._scenario_data.fas is not None and self._step >= 0:
+            frame = self._scenario_data.fas[self._step]
+            if len(frame) > 0:
+                self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=12, linewidth=.5, color="red", edgecolors="darkred", marker="o", zorder=zorder,
+                                 label="false alarm ($t_{k}$)")
+            # end if
         # end if
     # end def
 
     def _draw_until_false_alarm(self, zorder):
         if self._scenario_data.fas is not None:
             for frame in self._scenario_data.fas[:self._step + 1]:
-                self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=12, linewidth=.5, color="red", edgecolors="darkred", marker="o", zorder=zorder,
-                                 label="false alarm ($t_{0..k}$)")
+                if len(frame) > 0:
+                    self._ax.scatter([det.x for det in frame], [det.y for det in frame], s=12, linewidth=.5, color="red", edgecolors="darkred", marker="o", zorder=zorder,
+                                     label="false alarm ($t_{0..k}$)")
+                # end if
             # end for
         # end if
     # end def
@@ -427,9 +461,9 @@ class BaseFilterSimulator(FilterSimulator):
                         layer = int(fields[1])
                         if min(draw_layer_enum) <= layer <= max(draw_layer_enum):
                             for l, ly in enumerate(self._draw_layers):
-                                if DrawLayerBase(layer) is ly:
+                                if self.get_draw_layer_enum()(layer) is ly:
                                     self._active_draw_layers[l] = not self._active_draw_layers[l]
-                                    print(f"Layer {DrawLayerBase(layer).name} {'de' if not self._active_draw_layers[l] else ''}activated.")
+                                    print(f"Layer {self.get_draw_layer_enum()(layer).name} {'de' if not self._active_draw_layers[l] else ''}activated.")
                                     self._refresh.set()
                                 # end if
                             # end for
@@ -467,6 +501,10 @@ class BaseFilterSimulator(FilterSimulator):
                     self._toggle_additional_axis(self._ax_add_enum.NONE)
                 # end if
             # end if
+
+        elif cmd == "r":  # Reset
+            self.restart()
+
         else:
             pass
         # end if

@@ -45,7 +45,7 @@ class GmPhdFilterSimulator(GmPhdBaseFilterSimulator):
         s_sup = GmPhdBaseFilterSimulatorConfigSettings.from_obj(s)
         GmPhdBaseFilterSimulator.__init__(self, s_sup)
 
-        self.f = GmPhdFilter(birth_gmm=s.birth_gmm, survival=s.p_survival, detection=s.p_detection, f=s.f, q=settings.q,
+        self.f = GmPhdFilter(birth_gmm=s.birth_gmm, survival=s.p_survival, detection=s.p_detection, f=s.f, q=s.q,
                              h=s.h, r=s.r, rho_fa=s.rho_fa, gate_thresh=s.gate_thresh, logging=s.verbosity)
     # end def
 
@@ -115,8 +115,11 @@ class GmPhdFilterSimulator(GmPhdBaseFilterSimulator):
     # end def
 
     def get_ax_title(self) -> str:
+        n_states_real = sum(map(lambda gtt: gtt.begin_step <= self._step < gtt.begin_step + len(gtt.points), self._scenario_data.gtts))  # Real number of targets
+        n_targets = self.f.gmm.get_total_weight()  # Estimated targets by the filter intensity
+
         return f"Sim-Step: {self._step if self._step >= 0 else '-'}, Sim-SubStep: {self._last_step_part}, # Est. States: " \
-            f"{len(self._ext_states[-1]) if len(self._ext_states) > 0 else '-'}, # GMM-Components: {len(self.f.gmm)}, # GOSPA: " \
+            f"{len(self._ext_states[-1]) if len(self._ext_states) > 0 else '-'} ({n_targets:.02f} / {n_states_real}), # GMM-Components: {len(self.f.gmm)}, # GOSPA: " \
             f"{self._gospa_values[-1] if len(self._gospa_values) > 0 else '-':.04}"
     # end def
 

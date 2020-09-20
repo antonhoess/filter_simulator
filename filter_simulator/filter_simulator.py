@@ -173,6 +173,14 @@ class FilterSimulator(ABC):
     def _det_limits(self) -> Limits:
         return self.__det_limits
 
+    # XXX
+    def restart(self):
+        self.__step = -1
+        #self.__set_next_step()
+
+        self._next_part_step = True
+    # end def
+
     def __set_next_step(self) -> bool:
         if self.__simulation_direction == SimulationDirection.FORWARD:
             if self.__step < (len(self._frames) - 1):
@@ -209,6 +217,7 @@ class FilterSimulator(ABC):
             self.__fig: plt.Figure = plt.figure()
             self.__fig.canvas.set_window_title("State Space")
             self.__ax = self.__fig.add_subplot(1, 1, 1)
+            self.__ax.format_coord = lambda x, y: f"x={x:.04f}, y={y:.04f}, z={self._eval_at(x, y):.08e}"
 
             if self._show_colorbar:
                 divider = make_axes_locatable(self._ax)
@@ -279,6 +288,10 @@ class FilterSimulator(ABC):
             borders = self._frames.calc_limits()
             self._ax.set_xlim(borders.x_min, borders.x_max)
             self._ax.set_ylim(borders.y_min, borders.y_max)
+        # end if
+
+        if len(fields) == 2 and ("ctrl" in fields or "control" in fields) and "r" in fields:
+            self.restart()
         # end if
     # end def
 
@@ -697,12 +710,19 @@ class FilterSimulator(ABC):
     # end def
 
     @abstractmethod
+    def _eval_at(self, x: float, y: float) -> float:
+        pass
+    # end def
+
+    @abstractmethod
     def _set_sim_loop_step_part_conf(self) -> SimStepPartConf:
         pass
+    # end def
 
     @abstractmethod
     def _update_window(self, limits: Limits) -> None:
         pass
+    # end def
 
     def _cb_keyboard(self, cmd: str) -> None:  # Can be overloaded
         if cmd == "":

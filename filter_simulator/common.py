@@ -33,7 +33,7 @@ class SimulationDirection(IntEnum):
 
 
 class Limits:
-    def __init__(self, x_min: float = .0, y_min: float = .0, x_max: float = .0, y_max: float = .0):
+    def __init__(self, x_min: float = None, y_min: float = None, x_max: float = None, y_max: float = None):
         self.x_min: float = x_min
         self.y_min: float = y_min
         self.x_max: float = x_max
@@ -206,6 +206,9 @@ class FrameList:
     def calc_limits(self) -> Limits:
         limits: Limits = Limits()
 
+        # XXX Change the logic:
+        # * Not only the detections are of interest
+        # * Only the elements currently visible on the plotting windows should be considered (e.g. for some layers, that's only up the the current time step)
         self.foreach_detection(self.__update_limit_by_detection, limits=limits)
 
         return limits
