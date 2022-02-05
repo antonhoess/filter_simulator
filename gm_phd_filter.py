@@ -1,5 +1,5 @@
 # Heavily modified version of the GM-PHD implementation in python by Dan Stowell.
-# Based on the description in Vo and Ma (2006).
+# Based on the description in Vo and Ma (2006): The Gaussian mixture probability hypothesis density filter.
 # (c) 2012 Dan Stowell and Queen Mary University of London.
 # All rights reserved.
 #

@@ -115,11 +115,14 @@ class GmPhdFilterSimulator(GmPhdBaseFilterSimulator):
     # end def
 
     def get_ax_title(self) -> str:
-        n_states_real = sum(map(lambda gtt: gtt.begin_step <= self._step < gtt.begin_step + len(gtt.points), self._scenario_data.gtts))  # Real number of targets
+        if self._scenario_data.gtts is not None:
+            n_states_real = sum(map(lambda gtt: gtt.begin_step <= self._step < gtt.begin_step + len(gtt.points), self._scenario_data.gtts))  # Real number of targets
+        else:
+            n_states_real = None
         n_targets = self.f.gmm.get_total_weight()  # Estimated targets by the filter intensity
 
         return f"Sim-Step: {self._step if self._step >= 0 else '-'}, Sim-SubStep: {self._last_step_part}, # Est. States: " \
-            f"{len(self._ext_states[-1]) if len(self._ext_states) > 0 else '-'} ({n_targets:.02f} / {n_states_real}), # GMM-Components: {len(self.f.gmm)}, # GOSPA: " \
+            f"{len(self._ext_states[-1]) if len(self._ext_states) > 0 else '-'} ({n_targets:.02f} / {n_states_real if n_states_real is not None else '-'}), # GMM-Components: {len(self.f.gmm)}, # GOSPA: " \
             f"{self._gospa_values[-1] if len(self._gospa_values) > 0 else '-':.04}"
     # end def
 
@@ -213,7 +216,7 @@ def main(argv: List[str]):
     sns.set(color_codes=True)
 
     # Initialize random generator
-    random.seed(datetime.now())
+    random.seed(None)
 
     # Read command line arguments
     config = GmPhdFilterSimulatorConfig()
@@ -256,7 +259,7 @@ def main(argv: List[str]):
 
         # Convert data from certain coordinate systems to ENU, which is used internally
         if scenario_data.meta.coordinate_system == CoordSysConv.WGS84.value:
-            scenario_data = Wgs84ToEnuConverter.convert(scenario_data, args.observer)
+            scenario_data = Wgs84ToEnuConverter.convert(scenario_data, args.observer_position)
         # end if
 
     else:  # data_provider == DataProviderType.SIMULATOR

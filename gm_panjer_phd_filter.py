@@ -1,6 +1,7 @@
 # Author: Anton Höß
 # Heavily modified code from the Python PHD-Filter of Dan Stowell (2012) extended by
-# Code of PHD-Panjer-Filter from Isabel Schlangen [is] (2016) translated from MATLAB to Python
+# Code of PHD-Panjer-Filter from Isabel Schlangen [is] (2016) translated from MATLAB to Python:
+# A second-order PHD filter with mean and variance in target number
 
 from __future__ import annotations
 from typing import List, Optional
@@ -113,7 +114,7 @@ class GmPanjerPhdFilter:
 
         # Calculate predicted variance
         mu_pred = updated.get_total_weight()  # Predicted intensity
-        # XXX beim 2. durchlauf ist hier bereits ein erster fehler, da hier eine andere summe rauskommt, wie in matlab und tatsächlich haben meine GMM components andere gewichte
+        # XXX On the second run here is already a first error, because here results another sum as in Matlab and in fact my GMM components have different weights.
         var_pred = mu_pred + self._survival ** 2 * nu_x - mu_pred ** 2  # Prediction of variance without birth
         self._variance = var_pred + self._var_birth  # Full variance including birth
 
@@ -460,10 +461,10 @@ class GmPanjerPhdFilter:
         return l1, l2, l1z, l2z, l2zz
     # end def
 
-    # XXX diese und die zwei spezielleren extract_states-Funktionen sind 1:1 aus dem PHD-Filter übernommen - nochmal checken:
-    # * sinnvoll für phd-Filter?
-    # * wenn es in beiden filtern das gleiche ist, kann ich es irgendwie nur an einer Stelle halten, um eben diese Duplikate zu vermeiden?
-    # * sinnvoll, diese beiden funktionen in das GMM zu übernehmen, oder ist es zu speziell, da jedes Filter seine eigene Logik hat? -> Checken?
+    # XXX This and the two more specific extract_states-functions are taken 1:1 from the PHD-Filter paper - check again:
+    # * Does it make for the PDH filter?
+    # * In case it is the same for both filter, is it possible to keep just in one place to avoid duplicates?
+    # * Does it make sense to take these both function into GMM, or is it to specific, as each filter has its own logic? -> Check?
     def extract_states(self, bias: float = 1.0, use_integral: bool = False):
         if not use_integral:
             items = self._extract_states(bias)

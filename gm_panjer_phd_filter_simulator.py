@@ -245,7 +245,7 @@ class GmPanjerPhdFilterSimulatorConfig(GmPhdBaseFilterSimulatorConfig):
                 SimStepPart.DRAW, SimStepPart.WAIT_FOR_TRIGGER, SimStepPart.LOAD_NEXT_FRAME]
     # end def
 
-    # XXX temp. For testing purposes
+    # XXX Temp. for testing purposes
     @staticmethod
     def get_sim_loop_step_parts_default2() -> List[SimStepPartBase]:
         return [SimStepPart.USER_INITIAL_KEYBOARD_COMMANDS,

@@ -238,7 +238,7 @@ class ScenarioData:
             return False
         # end if
 
-        # time-delta # XXX - das hier noch irgendwie mit den time-deltas weiter unten verwursten - und wie mit den kommandozeilen-parametern verwursten?
+        # time-delta # XXX - Combine this with the time-deltas below; and how to combine it with the command line parameters?
         if self.meta.time_delta <= 0:
             print(f"'meta-information.time-delta' ({self.meta.time_delta}) needs to be > 0.")
             return False

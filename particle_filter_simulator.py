@@ -172,7 +172,7 @@ class ParticleFilterSimulator(BaseFilterSimulator):
             if len(self.f.particles) > 0:
                 x = [p.x for p in self.f.particles]
                 y = [p.y for p in self.f.particles]
-                self._draw_plot = sns.kdeplot(x, y, shade=True, ax=self._ax, shade_lowest=False, cmap=self._draw_cmap, cbar=(self._show_colorbar and not self._colorbar_is_added), cbar_ax=self._cax, zorder=zorder)  # Colorbar instead of label
+                self._draw_plot = sns.kdeplot(x=x, y=y, shade=True, ax=self._ax, thresh=0.05, cmap=self._draw_cmap, cbar=(self._show_colorbar and not self._colorbar_is_added), cbar_ax=self._cax, zorder=zorder)  # Colorbar instead of label
                 self._colorbar_is_added = True
             # end if
 

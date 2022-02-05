@@ -127,7 +127,7 @@ class FilterSimulator(ABC):
         self.__fn_out_video_gen: Optional[str] = None  # For the generated name
 
         self.__drag_start = None
-        self.__auto_step_toggled_on: bool = False  # This is neccessary, since the program waits in the manual stepping mode for a keyboard or mouse action for the next simulation step
+        self.__auto_step_toggled_on: bool = False  # This is necessary, since the program waits in the manual stepping mode for a keyboard or mouse action for the next simulation step
 
     @property
     def _refresh(self) -> threading.Event:
@@ -347,17 +347,15 @@ class FilterSimulator(ABC):
     # end def
 
     def __handle_mpl_event(self, event: matplotlib.backend_bases.MouseEvent):
-        # xxx mit überlegen, in welchem modus ich die punkte (also mit mehrerer detektionen pro frame) durch klicken
-        # erstellen will - vllt. auch zweilei modi. die geklickten punkte entsprechend eingefärbt darstellen und
-        # abspeichern. auch dies erlauben, wenn keine daten geladen wurden, durch angabe von einem default fenster,
-        # das ja dann noch gezoomt und verschoben werden kann, um die stelle zu finden, die man möchte. es bräuchte
-        # hierzu natürlich auch noch eine observer gps position:
-        # man muss auch etwas überspringen können und tracks beenden können
-        # hauptfrage: erst track 1, dann track 2, etc. oder erst alle detektionen in frame 1, dann in frame 2, etc.
-        # track-weise scheint erst mal unlogisch, da die je erst später erstellt werden, oder doch nicht? es wäre jedoch
-        # einfach zu klicken, aber es besteht auch die gefahr, dass die zeiten der verschiedenen tracks auseinander
-        # laufen, wenn ich beim einen viel mehr klicks mache, als beim anderen und diese am ende wieder
-        # zusammenführen...
+        # XXX Think about in  which mode the points (with multiple detection per frame) I want to get created by
+        # clicking. Maybe make two different modes. Color the clicked points and save them. Also allow clicking
+        # points even when there are no data loaded by defining a default window´which can get zoomed and moved to
+        # find the position one wants. For this we need of course an observer GPS position.
+        # It should be possible to skip and terminate tracks.
+        # Main question: First track 1, then track 2, etc. or first all detections in frame 1, then in frame 2, etc.?
+        # Track-wise seems to make no sense as they first get created later, isn't it? However it would be easy to
+        # click but it has the risk the the times of the different tracks differ more and more when one track gets
+        # way more points than the other and finally joining them.
 
         if self.__window_mode_checker.get_current_mode() == WindowMode.SIMULATION:
             # Right mouse button: Navigate forwards / backwards
@@ -626,7 +624,7 @@ class FilterSimulator(ABC):
                     else:
                         # Wait for Return-Key-Press (console) or mouse click (GUI)
                         while not (self.__next_part_step or self.__auto_step_toggled_on):
-                            time.sleep(0.1)
+                            time.sleep(1.1)
 
                         self.__auto_step_toggled_on = False
                         self.__next_part_step = False
