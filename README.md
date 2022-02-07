@@ -56,12 +56,25 @@ find . -name '*.py' -exec epydoc --pdf --graph=all {} +
 * Use "import logging" instead of own logging system?
 
 
+## Here are some screenshots on what is possible
+### GM-PHD filter
+![GM-PHD filter 1](doc/images/gm_phd_filter_1.png "GM-PHD filter 1")
+Run-command:
+```./gm_phd_filter_simulator.py --data_provider="DataProviderType.SIMULATOR" --sim_t_max=50 --limits_mode=LimitsMode.ALL_DETECTIONS_FIXED_UPDATE --birth_gmm="[GmComponent(0.1, np.zeros(4), np.diag(np.repeat(10000., 4)))]" --p_survival=0.9 --p_detection=0.9 --transition_model=TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND --delta_t=1.0 --mat_f="np.block([[np.eye(2), np.eye(2)], [np.eye(2) * 0., np.eye(2)]])" --mat_q="np.eye(4) * 0." --mat_h="np.block([np.eye(2), np.eye(2) *0.])" --mat_r="np.eye(2) * 10.1" --sigma_vel_x=3. --sigma_vel_y=3. --sigma_accel_x=.7 --sigma_accel_y=.7 --trunc_thresh=1e-6 --merge_thresh=1e-2 --max_components=100 --ext_states_bias=1000. --ext_states_use_integral=1 --density_draw_style=DensityDrawStyle.KDE --n_samples_density_map=1000 --n_bins_density_map=100 --draw_layers="[layer for layer in DrawLayer if not layer == DrawLayer.GMM_COV_ELL and not layer == DrawLayer.GMM_COV_MEAN and not layer == DrawLayer.ALL_DET_CONN]"```
 
+![GM-PHD filter 2](doc/images/gm_phd_filter_2.png "GM-PHD filter 2")
+Run-command:
+```./gm_phd_filter_simulator.py --data_provider="DataProviderType.SIMULATOR" --input_coord_system_conversion="CoordSysConv.WGS84" --output_coord_system_conversion="CoordSysConv.WGS84" --_input_coord_system_conversion="CoordSysConv.ENU" --output_coord_system_conversion="CoordSysConv.ENU" --_output_video="phd_fitler_sim_??.mp4" --observer_position 0 0 --verbosity=Logging.INFO --sim_t_max=50 --fov -100 -100 100 100 --birth_area -50 -50 50 50 --limits_mode=LimitsMode.FOV_INIT_ONLY --birth_gmm="[GmComponent(0.1, np.zeros(4), np.diag(np.repeat(10000., 4)))]" --p_survival=0.9 --p_detection=0.9 --transition_model=TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND --delta_t=1.0 --mat_f="np.block([[np.eye(2), np.eye(2)], [np.eye(2) * 0., np.eye(2)]])" --mat_q="np.eye(4) * 0." --mat_h="np.block([np.eye(2), np.eye(2) *0.])" --mat_r="np.eye(2) * 10.1" --sigma_vel_x=3. --sigma_vel_y=3. --sigma_accel_x=.7 --sigma_accel_y=.7 --clutter=1 --trunc_thresh=1e-6 --merge_dist_measure=DistMeasure.HELLINGER --merge_thresh=1e-2 --max_components=100 --ext_states_bias=1000. --ext_states_use_integral=1 --density_draw_style=DensityDrawStyle.KDE --n_samples_density_map=1000 --n_bins_density_map=300 --_draw_layers="[layer for layer in DrawLayer]" --input=detections/manual_3_targets_split_merge.det --auto_step_interval=0 --_sim_t_max=10 --max_components=10 --_draw_layers="[DrawLayer.UNTIL_TRAJ_LINE, DrawLayer.UNTIL_TRAJ_POS]" --_init_kbd_cmds="['l', 'l 0', 'l']" --_data_provider="DataProviderType.FILE_READER" --input=scene_data.yaml_0000 --input=scenario_data_0000.yaml --output=scenario_data_??.yaml --gospa_c=10. --gospa_p=2 --_auto_step_autostart=True --_gui=False --_init_kbd_cmds="['p g']" --init_kbd_cmds="['h']"```
 
+### GM-Panjer-PHD filter
+![GM-Panjer-PHD filter](doc/images/gm_panjer_phd_filter.png "GM-Panjer-PHD filter")
+Run-command:
+```./gm_panjer_phd_filter_simulator.py --data_provider="DataProviderType.SIMULATOR" --input_coord_system_conversion="CoordSysConv.WGS84" --output_coord_system_conversion="CoordSysConv.ENU" --observer_position 0 0 --verbosity=Logging.INFO --sim_t_max=50 --fov -100 -100 100 100 --birth_area -50 -50 50 50 --limits_mode=LimitsMode.FOV_INIT_ONLY --birth_gmm="[GmComponent(0.1, np.asarray([50, 50, 0, 0]), np.eye(4)*10000.)]" --p_survival=0.9 --p_detection=0.9 --transition_model=TransitionModel.PCW_CONST_WHITE_ACC_MODEL_2xND --delta_t=1.0 --mat_f="np.block([[np.eye(2), np.eye(2)], [np.eye(2) * 0., np.eye(2)]])" --mat_q="np.eye(4) * 0." --mat_h="np.block([np.eye(2), np.eye(2) *0.])" --mat_r="np.eye(2) * 10.1" --sigma_vel_x=3. --sigma_vel_y=3. --sigma_accel_x=.7 --sigma_accel_y=.7 --clutter=10 --trunc_thresh=1e-6 --merge_dist_measure=DistMeasure.HELLINGER --merge_thresh=1e-2 --ext_states_bias=1000. --ext_states_use_integral=1 --density_draw_style=DensityDrawStyle.EVAL --n_bins_density_map=100 --max_components=10 --draw_layers="[layer for layer in DrawLayer if layer in (DrawLayer.DENSITY_MAP, DrawLayer.FOV, DrawLayer.BIRTH_AREA, DrawLayer.UNTIL_TRAJ_LINE, DrawLayer.UNTIL_TRAJ_POS, DrawLayer.CUR_MISSED_DET, DrawLayer.CUR_FALSE_ALARM, DrawLayer.CUR_EST_STATE, DrawLayer.UNTIL_EST_STATE, DrawLayer.CUR_DET)]" --gospa_c=10. --gospa_p=2 --_auto_step_autostart=True --init_kbd_cmds="['h']" --show_colorbar=False```
 
-
-## Here a screenshot on what is possible (simple example)
-![Simulation](doc/images/simulation.png "Simulation")
+### Particle filter
+![Particle filter](doc/images/particle_filter.png "Particle filter")
+Run-command:
+```./particle_filter_simulator.py --input detections/manual_3_targets_split_merge.yaml -n 10```
 
 
 ## How to use the program (copied from the programs help)
